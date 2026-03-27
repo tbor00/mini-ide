@@ -7,6 +7,7 @@ import cors from "cors";
 import { spawnTerminal } from "./terminal";
 import { filesystemRouter } from "./filesystem";
 import { authRouter, requireAuth, isValidToken } from "./auth";
+import { brandingRouter, generateManifest } from "./branding";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,8 +24,21 @@ app.use("/api/auth", authRouter);
 // Protected API routes
 app.use("/api/fs", requireAuth, filesystemRouter);
 
+// Branding routes (public reads, auth-protected writes)
+app.use("/api/branding", brandingRouter);
+
 // Serve client static files in production
 const clientDist = path.join(__dirname, "../client/dist");
+
+// Dynamic manifest (must come before static middleware)
+app.get("/manifest.json", async (_req, res) => {
+  try {
+    const manifest = await generateManifest();
+    res.json(manifest);
+  } catch {
+    res.sendFile(path.join(clientDist, "manifest.json"));
+  }
+});
 app.use(express.static(clientDist));
 app.get("*", (_req, res) => {
   res.sendFile(path.join(clientDist, "index.html"));

@@ -21,6 +21,34 @@ export default function App() {
     saveTheme(theme);
   }, [theme]);
 
+  // Apply branding (icon + title) to DOM
+  const applyBranding = useCallback(async () => {
+    try {
+      const res = await fetch("/api/branding");
+      const data = await res.json();
+
+      // Update document title
+      document.title = data.name || "mini-ide";
+
+      // Update meta apple-mobile-web-app-title
+      const metaAppTitle = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+      if (metaAppTitle) metaAppTitle.setAttribute("content", data.name || "mini-ide");
+
+      // Update favicon and apple-touch-icon
+      const iconHref = data.hasIcon ? `/api/branding/icon?t=${Date.now()}` : "/icons/icon.svg";
+      const favicon = document.querySelector('link[rel="icon"]');
+      if (favicon) favicon.setAttribute("href", iconHref);
+      const appleTouchIcon = document.querySelector('link[rel="apple-touch-icon"]');
+      if (appleTouchIcon) appleTouchIcon.setAttribute("href", iconHref);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    applyBranding();
+  }, [applyBranding]);
+
   const handleDragStart = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
@@ -70,7 +98,7 @@ export default function App() {
                 rightTab === "theme" ? "ide-tab-active" : "ide-tab"
               }`}
             >
-              Colores
+              Marca
             </button>
           </div>
 
@@ -92,7 +120,7 @@ export default function App() {
           {rightTab === "terminal" ? (
             <Terminal token={token} />
           ) : (
-            <ThemeCustomizer theme={theme} onChange={setTheme} onReset={() => setTheme(DEFAULT_THEME)} />
+            <ThemeCustomizer theme={theme} onChange={setTheme} onReset={() => setTheme(DEFAULT_THEME)} token={token} onBrandingChange={applyBranding} />
           )}
         </div>
       </div>
