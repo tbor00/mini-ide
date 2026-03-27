@@ -13,15 +13,15 @@ export interface IdeTheme {
 export const THEME_STORAGE_KEY = "mini_ide_theme";
 
 export const DEFAULT_THEME: IdeTheme = {
-  bg: "#0b1220",
-  panel: "#0f172a",
-  panelSoft: "#111c34",
-  panelHover: "#1b2a4a",
-  border: "#2a3f65",
-  text: "#e2e8f0",
-  muted: "#93c5fd",
-  accent: "#0284c7",
-  accentHover: "#0369a1",
+  bg: "#0a0a0b",
+  panel: "#121214",
+  panelSoft: "#1a1a1d",
+  panelHover: "#242429",
+  border: "#34343a",
+  text: "#f5f5f5",
+  muted: "#b9b9c2",
+  accent: "#52525b",
+  accentHover: "#3f3f46",
 };
 
 function isHexColor(value: string): boolean {

@@ -1,4 +1,4 @@
-const CACHE_NAME = "mini-ide-v1";
+const CACHE_NAME = "mini-ide-v2";
 const PRECACHE_URLS = ["/", "/index.html"];
 
 // Install — cache shell

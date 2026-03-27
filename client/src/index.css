@@ -3,15 +3,15 @@
 @tailwind utilities;
 
 :root {
-  --ide-bg: #0b1220;
-  --ide-panel: #0f172a;
-  --ide-panel-soft: #111c34;
-  --ide-panel-hover: #1b2a4a;
-  --ide-border: #2a3f65;
-  --ide-text: #e2e8f0;
-  --ide-muted: #93c5fd;
-  --ide-accent: #0284c7;
-  --ide-accent-hover: #0369a1;
+  --ide-bg: #0a0a0b;
+  --ide-panel: #121214;
+  --ide-panel-soft: #1a1a1d;
+  --ide-panel-hover: #242429;
+  --ide-border: #34343a;
+  --ide-text: #f5f5f5;
+  --ide-muted: #b9b9c2;
+  --ide-accent: #52525b;
+  --ide-accent-hover: #3f3f46;
 }
 
 html,
