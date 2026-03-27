@@ -7,13 +7,18 @@ import { ThemeCustomizer } from "./components/ThemeCustomizer";
 import { applyTheme, DEFAULT_THEME, IdeTheme, loadTheme, saveTheme } from "./theme";
 
 type RightTab = "terminal" | "theme";
+type MobileTab = "files" | "terminal" | "theme";
 
 export default function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem("auth_token") || "");
   const [dividerX, setDividerX] = useState(50);
   const [isDragging, setIsDragging] = useState(false);
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth < 768 : false
+  );
   const [showPreview, setShowPreview] = useState(false);
   const [rightTab, setRightTab] = useState<RightTab>("terminal");
+  const [mobileTab, setMobileTab] = useState<MobileTab>("files");
   const [theme, setTheme] = useState<IdeTheme>(() => loadTheme());
 
   useEffect(() => {
@@ -49,6 +54,14 @@ export default function App() {
     applyBranding();
   }, [applyBranding]);
 
+  useEffect(() => {
+    const onResize = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
   const handleDragStart = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
@@ -74,15 +87,61 @@ export default function App() {
   }
 
   return (
-    <div className={`ide-root h-full flex ${isDragging ? "select-none cursor-col-resize" : ""}`}>
-      <div className="h-full overflow-hidden flex flex-col ide-panel" style={{ width: `${dividerX}%` }}>
+    <div className={`ide-root h-full flex flex-col md:flex-row ${isDragging ? "select-none cursor-col-resize" : ""}`}>
+      <div className="md:hidden px-3 py-2 border-b ide-border ide-panel-soft flex items-center gap-1.5 shrink-0">
+        <button
+          onClick={() => setMobileTab("files")}
+          className={`px-2.5 py-1 text-xs rounded transition-colors ${
+            mobileTab === "files" ? "ide-tab-active" : "ide-tab"
+          }`}
+        >
+          Archivos
+        </button>
+        <button
+          onClick={() => {
+            setRightTab("terminal");
+            setMobileTab("terminal");
+          }}
+          className={`px-2.5 py-1 text-xs rounded transition-colors ${
+            mobileTab === "terminal" ? "ide-tab-active" : "ide-tab"
+          }`}
+        >
+          Terminal
+        </button>
+        <button
+          onClick={() => {
+            setRightTab("theme");
+            setMobileTab("theme");
+          }}
+          className={`px-2.5 py-1 text-xs rounded transition-colors ${
+            mobileTab === "theme" ? "ide-tab-active" : "ide-tab"
+          }`}
+        >
+          Marca
+        </button>
+        <div className="flex-1" />
+        <button
+          onClick={() => setShowPreview(true)}
+          className="px-2.5 py-1 text-xs font-medium rounded ide-accent text-white transition-colors"
+        >
+          Navegador
+        </button>
+      </div>
+
+      <div
+        className={`${mobileTab === "files" ? "flex" : "hidden"} md:flex h-full overflow-hidden flex-col ide-panel`}
+        style={!isMobile ? { width: `${dividerX}%` } : undefined}
+      >
         <FileExplorer token={token} />
       </div>
 
-      <div className="w-1.5 cursor-col-resize ide-divider shrink-0" onMouseDown={handleDragStart} />
+      <div className="hidden md:block w-1.5 cursor-col-resize ide-divider shrink-0" onMouseDown={handleDragStart} />
 
-      <div className="h-full overflow-hidden flex flex-col ide-panel" style={{ width: `${100 - dividerX}%` }}>
-        <div className="px-4 py-2 border-b ide-border ide-panel-soft flex items-center gap-2">
+      <div
+        className={`${mobileTab === "files" ? "hidden" : "flex"} md:flex h-full overflow-hidden flex-col ide-panel`}
+        style={!isMobile ? { width: `${100 - dividerX}%` } : undefined}
+      >
+        <div className="hidden md:flex px-4 py-2 border-b ide-border ide-panel-soft items-center gap-2">
           <div className="flex items-center gap-1">
             <button
               onClick={() => setRightTab("terminal")}
@@ -117,11 +176,18 @@ export default function App() {
         </div>
 
         <div className="flex-1 min-h-0">
-          {rightTab === "terminal" ? (
+          <div className={rightTab === "terminal" ? "h-full" : "hidden"}>
             <Terminal token={token} />
-          ) : (
-            <ThemeCustomizer theme={theme} onChange={setTheme} onReset={() => setTheme(DEFAULT_THEME)} token={token} onBrandingChange={applyBranding} />
-          )}
+          </div>
+          <div className={rightTab === "theme" ? "h-full" : "hidden"}>
+            <ThemeCustomizer
+              theme={theme}
+              onChange={setTheme}
+              onReset={() => setTheme(DEFAULT_THEME)}
+              token={token}
+              onBrandingChange={applyBranding}
+            />
+          </div>
         </div>
       </div>
 
