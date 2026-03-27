@@ -1,0 +1,143 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ide-bg: #0b1220;
+  --ide-panel: #0f172a;
+  --ide-panel-soft: #111c34;
+  --ide-panel-hover: #1b2a4a;
+  --ide-border: #2a3f65;
+  --ide-text: #e2e8f0;
+  --ide-muted: #93c5fd;
+  --ide-accent: #0284c7;
+  --ide-accent-hover: #0369a1;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+  background-color: var(--ide-bg);
+  color: var(--ide-text);
+}
+
+.ide-root {
+  background-color: var(--ide-bg);
+  color: var(--ide-text);
+}
+
+.ide-panel {
+  background-color: var(--ide-panel);
+}
+
+.ide-panel-soft {
+  background-color: var(--ide-panel-soft);
+}
+
+.ide-border {
+  border-color: var(--ide-border);
+}
+
+.ide-muted {
+  color: var(--ide-muted);
+}
+
+.ide-text {
+  color: var(--ide-text);
+}
+
+.ide-accent {
+  background-color: var(--ide-accent);
+}
+
+.ide-accent:hover {
+  background-color: var(--ide-accent-hover);
+}
+
+.ide-tab {
+  color: var(--ide-muted);
+}
+
+.ide-tab:hover {
+  background-color: var(--ide-panel-hover);
+}
+
+.ide-tab-active {
+  color: #ffffff;
+  background-color: var(--ide-accent);
+}
+
+.ide-divider {
+  background-color: var(--ide-border);
+}
+
+.ide-divider:hover {
+  background-color: var(--ide-accent);
+}
+
+.ide-icon-button {
+  color: var(--ide-muted);
+}
+
+.ide-icon-button:hover {
+  background-color: var(--ide-panel-hover);
+}
+
+.ide-icon-button-danger {
+  color: var(--ide-muted);
+}
+
+.ide-icon-button-danger:hover {
+  background-color: rgba(127, 29, 29, 0.45);
+  color: #fca5a5;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--ide-panel-soft);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--ide-accent);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ide-accent-hover);
+}
+
+/* Theme bridges for existing Tailwind classes in legacy components */
+.bg-blue-950 { background-color: var(--ide-bg) !important; }
+.bg-blue-900 { background-color: var(--ide-panel) !important; }
+.bg-blue-900\/60,
+.bg-blue-900\/50,
+.bg-blue-900\/40 { background-color: var(--ide-panel-soft) !important; }
+.bg-blue-800 { background-color: var(--ide-panel-hover) !important; }
+.border-blue-800,
+.border-blue-700 { border-color: var(--ide-border) !important; }
+.text-sky-400,
+.text-sky-300,
+.text-sky-200 { color: var(--ide-muted) !important; }
+.hover\:text-sky-300:hover,
+.hover\:text-sky-200:hover { color: var(--ide-text) !important; }
+.bg-sky-500,
+.bg-sky-600 { background-color: var(--ide-accent) !important; }
+.bg-sky-800 { background-color: var(--ide-panel-hover) !important; }
+.hover\:bg-sky-500:hover,
+.hover\:bg-sky-400:hover,
+.hover\:bg-emerald-500:hover,
+.bg-emerald-600 { background-color: var(--ide-accent-hover) !important; }
+.hover\:bg-blue-800:hover { background-color: var(--ide-panel-hover) !important; }
+.hover\:border-sky-500\/50:hover,
+.hover\:border-sky-500:hover { border-color: var(--ide-accent) !important; }

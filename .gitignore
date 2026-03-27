@@ -1,0 +1,13 @@
+# Dependencies
+node_modules/
+client/node_modules/
+
+# Build output
+client/dist/
+
+# TypeScript cache
+*.tsbuildinfo
+client/tsconfig.tsbuildinfo
+
+# OS files
+.DS_Store

@@ -1,0 +1,24 @@
+{
+  "name": "mini-ide",
+  "short_name": "mini-ide",
+  "description": "Editor web con terminal integrado",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0c1e3a",
+  "theme_color": "#0c1e3a",
+  "icons": [
+    {
+      "src": "/icons/icon-192.webp",
+      "sizes": "192x192",
+      "type": "image/webp",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.webp",
+      "sizes": "512x512",
+      "type": "image/webp",
+      "purpose": "any maskable"
+    }
+  ]
+}
