@@ -274,7 +274,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
 
         {/* Codex button */}
         <button
-          onClick={() => sendToActive("codex --full-auto\n")}
+          onClick={() => sendToActive("codex --yolo\n")}
           className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded bg-[#10a37f] hover:bg-[#0d8c6d] text-white transition-colors shrink-0"
           title="Ejecutar OpenAI Codex"
         >
