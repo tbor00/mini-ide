@@ -98,6 +98,25 @@ function rewriteHtmlBody(rawHtml: string, port: number): string {
     .replace(/location\.href\s*=\s*("|')\//g, `location.href=$1${PREVIEW_PREFIX}/${port}/`);
 }
 
+function rewriteJavaScriptBody(rawJs: string, port: number): string {
+  const prefix = `${PREVIEW_PREFIX}/${port}/`;
+  return rawJs
+    .replace(/(\bimport\s+(?:[^"'`]*?\s+from\s+)?["'])\//g, `$1${prefix}`)
+    .replace(/(\bexport\s+[^"'`]*?\s+from\s+["'])\//g, `$1${prefix}`)
+    .replace(/(\bimport\(\s*["'])\//g, `$1${prefix}`)
+    .replace(/(\bfetch\(\s*["'])\//g, `$1${prefix}`)
+    .replace(/(\bnew\s+URL\(\s*["'])\//g, `$1${prefix}`)
+    .replace(/(\bnew\s+WebSocket\(\s*["'])\//g, `$1${prefix}`)
+    .replace(/(\bnew\s+EventSource\(\s*["'])\//g, `$1${prefix}`);
+}
+
+function rewriteCssBody(rawCss: string, port: number): string {
+  const prefix = `${PREVIEW_PREFIX}/${port}/`;
+  return rawCss
+    .replace(/(url\(\s*["']?)\//g, `$1${prefix}`)
+    .replace(/(@import\s+["'])\//g, `$1${prefix}`);
+}
+
 export function previewHttpProxy(req: Request, res: Response): void {
   const port = parsePreviewPort(req.params.port || "");
   if (!port) {
@@ -125,6 +144,10 @@ export function previewHttpProxy(req: Request, res: Response): void {
     (proxyRes) => {
       const contentType = proxyRes.headers["content-type"] || "";
       const isHtml = typeof contentType === "string" && contentType.includes("text/html");
+      const isJavaScript =
+        typeof contentType === "string" &&
+        (contentType.includes("javascript") || contentType.includes("ecmascript"));
+      const isCss = typeof contentType === "string" && contentType.includes("text/css");
 
       if (isHtml) {
         const chunks: Buffer[] = [];
@@ -132,6 +155,19 @@ export function previewHttpProxy(req: Request, res: Response): void {
         proxyRes.on("end", () => {
           const html = Buffer.concat(chunks).toString("utf8");
           const rewritten = rewriteHtmlBody(html, port);
+          const responseHeaders = sanitizeProxyResponseHeaders(proxyRes.headers, port, true);
+          res.writeHead(proxyRes.statusCode || 200, responseHeaders);
+          res.end(rewritten);
+        });
+        return;
+      }
+
+      if (isJavaScript || isCss) {
+        const chunks: Buffer[] = [];
+        proxyRes.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        proxyRes.on("end", () => {
+          const raw = Buffer.concat(chunks).toString("utf8");
+          const rewritten = isJavaScript ? rewriteJavaScriptBody(raw, port) : rewriteCssBody(raw, port);
           const responseHeaders = sanitizeProxyResponseHeaders(proxyRes.headers, port, true);
           res.writeHead(proxyRes.statusCode || 200, responseHeaders);
           res.end(rewritten);
