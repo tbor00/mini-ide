@@ -4,7 +4,7 @@ import { WebSocketServer } from "ws";
 import path from "path";
 import { fileURLToPath } from "url";
 import cors from "cors";
-import { spawnTerminal } from "./terminal";
+import { spawnTerminal, listTerminalSessions, closeTerminalSession } from "./terminal";
 import { filesystemRouter } from "./filesystem";
 import { authRouter, requireAuth, isValidToken, getTokenFromAuthSources } from "./auth";
 import { brandingRouter, generateManifest } from "./branding";
@@ -24,6 +24,31 @@ app.use("/api/auth", authRouter);
 
 // Protected API routes
 app.use("/api/fs", requireAuth, filesystemRouter);
+app.get("/api/terminal/sessions", requireAuth, (req, res) => {
+  const token = getTokenFromAuthSources(
+    req.headers.authorization,
+    req.headers.cookie,
+    (req.query.token as string) || ""
+  );
+  if (!isValidToken(token)) {
+    res.status(401).json({ error: "No autorizado" });
+    return;
+  }
+  res.json({ ok: true, sessions: listTerminalSessions(token) });
+});
+app.delete("/api/terminal/sessions/:sessionId", requireAuth, (req, res) => {
+  const token = getTokenFromAuthSources(
+    req.headers.authorization,
+    req.headers.cookie,
+    (req.query.token as string) || ""
+  );
+  if (!isValidToken(token)) {
+    res.status(401).json({ error: "No autorizado" });
+    return;
+  }
+  const closed = closeTerminalSession(token, req.params.sessionId);
+  res.json({ ok: true, closed });
+});
 
 // Branding routes (public reads, auth-protected writes)
 app.use("/api/branding", brandingRouter);
@@ -60,7 +85,11 @@ wss.on("connection", (ws, req) => {
     return;
   }
 
-  spawnTerminal(ws);
+  spawnTerminal(ws, {
+    token,
+    sessionId: url.searchParams.get("sessionId") || undefined,
+    name: url.searchParams.get("name") || undefined,
+  });
 });
 
 server.on("upgrade", (req, socket, head) => {

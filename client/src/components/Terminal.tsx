@@ -13,6 +13,7 @@ export interface TerminalHandle {
 
 interface TermSession {
   id: number;
+  serverSessionId: string | null;
   name: string;
   term: XTerm;
   fitAddon: FitAddon;
@@ -20,6 +21,8 @@ interface TermSession {
   connected: boolean;
   containerEl: HTMLDivElement;
   observer: ResizeObserver;
+  reconnectTimer: number | null;
+  shouldReconnect: boolean;
 }
 
 const TERM_THEME = {
@@ -48,138 +51,202 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
   const [showInputOverlay, setShowInputOverlay] = useState(false);
   const [overlayText, setOverlayText] = useState("");
 
-  const connectSession = useCallback((session: TermSession) => {
-    if (session.ws) {
-      session.ws.close();
-    }
-
-    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${protocol}//${location.host}/ws/terminal?token=${encodeURIComponent(token)}`);
-    session.ws = ws;
-
-    ws.onopen = () => {
-      session.connected = true;
-      session.term.clear();
-      ws.send(JSON.stringify({ type: "resize", cols: session.term.cols, rows: session.term.rows }));
-      updateSessionState();
-    };
-
-    ws.onmessage = (e) => {
-      session.term.write(e.data);
-    };
-
-    ws.onclose = () => {
-      session.connected = false;
-      session.term.write("\r\n\x1b[91m[Conexion cerrada]\x1b[0m\r\n");
-      updateSessionState();
-    };
-
-    ws.onerror = () => {
-      session.connected = false;
-      updateSessionState();
-    };
-  }, [token]);
-
   const updateSessionState = useCallback(() => {
-    setSessions(
-      sessionsRef.current.map((s) => ({ id: s.id, name: s.name, connected: s.connected }))
-    );
+    setSessions(sessionsRef.current.map((s) => ({ id: s.id, name: s.name, connected: s.connected })));
   }, []);
 
-  const createSession = useCallback((name?: string) => {
-    const id = nextId++;
-    const containerEl = document.createElement("div");
-    containerEl.style.cssText = "width:100%;height:100%;display:none;padding:4px;";
+  const connectSession = useCallback(
+    (session: TermSession) => {
+      if (!session.shouldReconnect) return;
 
-    const term = new XTerm({
-      cursorBlink: true,
-      fontSize: 14,
-      fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
-      theme: TERM_THEME,
-    });
-
-    const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
-
-    if (wrapperRef.current) {
-      wrapperRef.current.appendChild(containerEl);
-    }
-
-    term.open(containerEl);
-    fitAddon.fit();
-
-    const observer = new ResizeObserver(() => {
-      if (containerEl.style.display !== "none") {
-        fitAddon.fit();
+      if (session.ws) {
+        session.ws.onclose = null;
+        session.ws.onerror = null;
+        session.ws.close();
       }
-    });
-    observer.observe(containerEl);
 
-    term.onData((data) => {
-      const s = sessionsRef.current.find((s) => s.id === id);
-      if (s?.ws?.readyState === WebSocket.OPEN) {
-        s.ws.send(JSON.stringify({ type: "input", data }));
+      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      const params = new URLSearchParams();
+      params.set("token", token);
+      params.set("name", session.name);
+      if (session.serverSessionId) params.set("sessionId", session.serverSessionId);
+      const ws = new WebSocket(`${protocol}//${location.host}/ws/terminal?${params.toString()}`);
+      session.ws = ws;
+
+      ws.onopen = () => {
+        session.connected = true;
+        updateSessionState();
+        ws.send(JSON.stringify({ type: "resize", cols: session.term.cols, rows: session.term.rows }));
+      };
+
+      ws.onmessage = (e) => {
+        if (typeof e.data !== "string") return;
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.type === "session_meta") {
+            if (typeof msg.sessionId === "string") session.serverSessionId = msg.sessionId;
+            if (typeof msg.name === "string") session.name = msg.name;
+            updateSessionState();
+            return;
+          }
+          if (msg.type === "output") {
+            session.term.write(msg.data || "");
+            return;
+          }
+          if (msg.type === "session_closed") {
+            session.connected = false;
+            session.shouldReconnect = false;
+            session.term.write("\r\n\x1b[91m[Sesion finalizada]\x1b[0m\r\n");
+            updateSessionState();
+            return;
+          }
+        } catch {
+          session.term.write(e.data);
+        }
+      };
+
+      ws.onclose = () => {
+        session.ws = null;
+        session.connected = false;
+        updateSessionState();
+        if (!session.shouldReconnect) return;
+        if (session.reconnectTimer != null) return;
+        session.term.write("\r\n\x1b[93m[Conexion perdida. Reconectando...]\x1b[0m\r\n");
+        session.reconnectTimer = window.setTimeout(() => {
+          session.reconnectTimer = null;
+          const stillExists = sessionsRef.current.some((s) => s.id === session.id);
+          if (!stillExists || !session.shouldReconnect) return;
+          connectSession(session);
+        }, 1500);
+      };
+
+      ws.onerror = () => {
+        session.connected = false;
+        updateSessionState();
+      };
+    },
+    [token, updateSessionState]
+  );
+
+  const createSession = useCallback(
+    (
+      name?: string,
+      options?: { serverSessionId?: string | null; activate?: boolean }
+    ) => {
+      const id = nextId++;
+      const containerEl = document.createElement("div");
+      containerEl.style.cssText = "width:100%;height:100%;display:none;padding:4px;";
+
+      const term = new XTerm({
+        cursorBlink: true,
+        fontSize: 14,
+        fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+        theme: TERM_THEME,
+      });
+
+      const fitAddon = new FitAddon();
+      term.loadAddon(fitAddon);
+
+      if (wrapperRef.current) {
+        wrapperRef.current.appendChild(containerEl);
       }
-    });
 
-    term.onResize(({ cols, rows }) => {
-      const s = sessionsRef.current.find((s) => s.id === id);
-      if (s?.ws?.readyState === WebSocket.OPEN) {
-        s.ws.send(JSON.stringify({ type: "resize", cols, rows }));
+      term.open(containerEl);
+      fitAddon.fit();
+
+      const observer = new ResizeObserver(() => {
+        if (containerEl.style.display !== "none") {
+          fitAddon.fit();
+        }
+      });
+      observer.observe(containerEl);
+
+      const session: TermSession = {
+        id,
+        serverSessionId: options?.serverSessionId || null,
+        name: name || `Terminal ${id}`,
+        term,
+        fitAddon,
+        ws: null,
+        connected: false,
+        containerEl,
+        observer,
+        reconnectTimer: null,
+        shouldReconnect: true,
+      };
+
+      term.onData((data) => {
+        if (session.ws?.readyState === WebSocket.OPEN) {
+          session.ws.send(JSON.stringify({ type: "input", data }));
+        }
+      });
+
+      term.onResize(({ cols, rows }) => {
+        if (session.ws?.readyState === WebSocket.OPEN) {
+          session.ws.send(JSON.stringify({ type: "resize", cols, rows }));
+        }
+      });
+
+      sessionsRef.current.push(session);
+      connectSession(session);
+      updateSessionState();
+
+      if (options?.activate ?? true) {
+        setActiveId(id);
       }
-    });
 
-    const session: TermSession = {
-      id,
-      name: name || `Terminal ${id}`,
-      term,
-      fitAddon,
-      ws: null,
-      connected: false,
-      containerEl,
-      observer,
-    };
+      return session;
+    },
+    [connectSession, updateSessionState]
+  );
 
-    sessionsRef.current.push(session);
-    connectSession(session);
-    updateSessionState();
-    setActiveId(id);
+  const closeSession = useCallback(
+    (id: number) => {
+      const idx = sessionsRef.current.findIndex((s) => s.id === id);
+      if (idx === -1) return;
+      if (sessionsRef.current.length <= 1) return;
 
-    return session;
-  }, [connectSession, updateSessionState]);
+      const session = sessionsRef.current[idx];
+      session.shouldReconnect = false;
+      if (session.reconnectTimer != null) {
+        window.clearTimeout(session.reconnectTimer);
+        session.reconnectTimer = null;
+      }
 
-  const closeSession = useCallback((id: number) => {
-    const idx = sessionsRef.current.findIndex((s) => s.id === id);
-    if (idx === -1) return;
+      if (session.ws?.readyState === WebSocket.OPEN) {
+        session.ws.send(JSON.stringify({ type: "close_session" }));
+      } else if (session.serverSessionId) {
+        fetch(`/api/terminal/sessions/${encodeURIComponent(session.serverSessionId)}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => {});
+      }
+      session.ws?.close();
+      session.observer.disconnect();
+      session.term.dispose();
+      session.containerEl.remove();
 
-    // Don't close the last terminal
-    if (sessionsRef.current.length <= 1) return;
+      sessionsRef.current.splice(idx, 1);
+      updateSessionState();
 
-    const session = sessionsRef.current[idx];
-    session.ws?.close();
-    session.observer.disconnect();
-    session.term.dispose();
-    session.containerEl.remove();
-
-    sessionsRef.current.splice(idx, 1);
-    updateSessionState();
-
-    // Switch to adjacent tab
-    setActiveId((current) => {
-      if (current === id) {
+      setActiveId((current) => {
+        if (current !== id) return current;
         const newIdx = Math.min(idx, sessionsRef.current.length - 1);
         return sessionsRef.current[newIdx]?.id ?? null;
-      }
-      return current;
-    });
-  }, [updateSessionState]);
+      });
+    },
+    [token, updateSessionState]
+  );
 
-  const sendToActive = useCallback((data: string) => {
-    const session = sessionsRef.current.find((s) => s.id === activeId);
-    if (session?.ws?.readyState === WebSocket.OPEN) {
-      session.ws.send(JSON.stringify({ type: "input", data }));
-    }
-  }, [activeId]);
+  const sendToActive = useCallback(
+    (data: string) => {
+      const session = sessionsRef.current.find((s) => s.id === activeId);
+      if (session?.ws?.readyState === WebSocket.OPEN) {
+        session.ws.send(JSON.stringify({ type: "input", data }));
+      }
+    },
+    [activeId]
+  );
 
   useImperativeHandle(ref, () => ({
     sendCommand: (cmd: string) => {
@@ -204,12 +271,10 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     setShowInputOverlay(false);
   }, [overlayText, sendToActive]);
 
-  // Show/hide terminal containers based on active tab
   useEffect(() => {
     for (const session of sessionsRef.current) {
       if (session.id === activeId) {
         session.containerEl.style.display = "block";
-        // Fit after becoming visible
         requestAnimationFrame(() => {
           session.fitAddon.fit();
           session.term.focus();
@@ -220,12 +285,43 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     }
   }, [activeId]);
 
-  // Create first terminal on mount
   useEffect(() => {
-    createSession();
+    let cancelled = false;
+
+    const boot = async () => {
+      try {
+        const res = await fetch("/api/terminal/sessions", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error("cannot load sessions");
+        const data = await res.json();
+        if (cancelled) return;
+
+        const remoteSessions = Array.isArray(data.sessions) ? data.sessions : [];
+        if (remoteSessions.length === 0) {
+          createSession();
+          return;
+        }
+
+        remoteSessions.forEach((item: { id: string; name: string }, idx: number) => {
+          createSession(item.name, { serverSessionId: item.id, activate: idx === 0 });
+        });
+      } catch {
+        if (!cancelled) {
+          createSession();
+        }
+      }
+    };
+
+    boot();
 
     return () => {
+      cancelled = true;
       for (const session of sessionsRef.current) {
+        session.shouldReconnect = false;
+        if (session.reconnectTimer != null) {
+          window.clearTimeout(session.reconnectTimer);
+        }
         session.ws?.close();
         session.observer.disconnect();
         session.term.dispose();
@@ -233,20 +329,16 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       }
       sessionsRef.current = [];
     };
-  }, []);
+  }, [createSession, token]);
 
   return (
     <div className="h-full flex flex-col relative">
-      {/* Terminal tabs + toolbar */}
       <div className="flex items-center gap-1 px-2 py-1 bg-blue-900/60 border-b border-blue-800 shrink-0 overflow-x-auto">
-        {/* Terminal tabs */}
         {sessions.map((s) => (
           <div
             key={s.id}
             className={`flex items-center gap-1 px-2 py-1 text-xs rounded cursor-pointer transition-colors shrink-0 ${
-              s.id === activeId
-                ? "bg-blue-800 text-white"
-                : "text-blue-300 hover:bg-blue-800/50 hover:text-white"
+              s.id === activeId ? "bg-blue-800 text-white" : "text-blue-300 hover:bg-blue-800/50 hover:text-white"
             }`}
             onClick={() => setActiveId(s.id)}
           >
@@ -267,7 +359,6 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
           </div>
         ))}
 
-        {/* New terminal button */}
         <button
           onClick={() => createSession()}
           className="p-1 rounded hover:bg-blue-800/50 text-blue-400 hover:text-white transition-colors shrink-0"
@@ -280,7 +371,6 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
 
         <div className="w-px h-4 bg-blue-700 mx-1 shrink-0" />
 
-        {/* Quick input overlay button */}
         <button
           onClick={() => setShowInputOverlay(true)}
           className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded bg-blue-700 hover:bg-blue-600 text-white transition-colors shrink-0"
@@ -292,7 +382,6 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
           Input
         </button>
 
-        {/* Claude button */}
         <button
           onClick={() => sendToActive("claude --dangerously-skip-permissions\n")}
           className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded bg-[#d97706] hover:bg-[#b45309] text-white transition-colors shrink-0"
@@ -304,7 +393,6 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
           Claude
         </button>
 
-        {/* Codex button */}
         <button
           onClick={() => sendToActive("codex --yolo\n")}
           className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded bg-[#10a37f] hover:bg-[#0d8c6d] text-white transition-colors shrink-0"
@@ -318,7 +406,6 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
 
         <div className="flex-1" />
 
-        {/* Reconnect active terminal */}
         <button
           onClick={() => {
             const session = sessionsRef.current.find((s) => s.id === activeId);
@@ -334,7 +421,6 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
         </button>
       </div>
 
-      {/* Terminal containers — all mounted, visibility toggled via display */}
       <div ref={wrapperRef} className="flex-1 min-h-0 relative">
         {showInputOverlay && (
           <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-sm p-3 flex flex-col gap-2">
