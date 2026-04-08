@@ -5,6 +5,7 @@ import "@xterm/xterm/css/xterm.css";
 
 export interface TerminalProps {
   token: string;
+  onSessionsChange?: (visibleNames: string[]) => void;
 }
 
 export interface TerminalHandle {
@@ -58,12 +59,22 @@ const TERM_THEME = {
 
 let nextId = 1;
 
-export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Terminal({ token }, ref) {
+export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Terminal(
+  { token, onSessionsChange },
+  ref
+) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const overlayTextareaRef = useRef<HTMLTextAreaElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const sessionsRef = useRef<TermSession[]>([]);
   const [sessions, setSessions] = useState<{ id: number; name: string; connected: boolean }[]>([]);
+  const onSessionsChangeRef = useRef(onSessionsChange);
+  useEffect(() => {
+    onSessionsChangeRef.current = onSessionsChange;
+  }, [onSessionsChange]);
+  useEffect(() => {
+    onSessionsChangeRef.current?.(sessions.map((s) => s.name));
+  }, [sessions]);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [showInputOverlay, setShowInputOverlay] = useState(false);
   const [overlayText, setOverlayText] = useState("");

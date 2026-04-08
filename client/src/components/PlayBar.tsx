@@ -1,11 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { TerminalHandle } from "./Terminal";
 
 interface PlayBarProps {
   token: string;
   terminalRef: React.RefObject<TerminalHandle>;
+  terminalSessionNames: string[];
   onRequestTerminalTab: () => void;
 }
+
+// Maximum time we wait for cloudflared to print its public URL before
+// giving up and stopping the poller. If the user's port never opened,
+// cloudflared retries forever — we shouldn't.
+const TUNNEL_POLL_TIMEOUT_MS = 45_000;
 
 interface PlayConfig {
   command: string;
@@ -69,29 +75,36 @@ async function detectPreset(token: string): Promise<Partial<PlayConfig>> {
   return {};
 }
 
-// Bash one-liner that launches the user command and cloudflared side by
-// side, tees cloudflared's stderr into a log file so we can scrape the
-// public URL, and makes Ctrl+C kill both via a SIGINT trap.
+// Builds the command we type into the Play terminal. We do NOT wrap
+// the user command in `bash -c '...'` because that requires escaping
+// any single quote the user happens to include (e.g. `node -e 'x'`).
+// Instead we send a subshell grouping — bash is already running in
+// the pty, it parses the line itself, so quoting in the user command
+// is handled naturally by the shell.
 function buildPlayCommand(cfg: PlayConfig): string {
-  // Clear any stale URL from a previous run before starting.
   const clearLog = `: > ${TUNNEL_LOG_PATH}`;
-  const userCmd = cfg.command;
   if (cfg.tunnel === "none") {
-    return `${clearLog}; ${userCmd}`;
+    return `${clearLog}; ${cfg.command}`;
   }
   const tunnelCmd = `cloudflared tunnel --url http://localhost:${cfg.port} 2>&1 | tee -a ${TUNNEL_LOG_PATH}`;
-  // `trap 'kill 0' INT TERM EXIT` kills the whole process group on Ctrl+C
-  // so the user command and cloudflared die together.
-  return `${clearLog}; bash -c 'trap "kill 0" INT TERM EXIT; (${userCmd}) & (${tunnelCmd}) & wait'`;
+  // Subshell + trap so Ctrl+C tears down the whole process group and
+  // the trap doesn't leak into the user's interactive shell afterwards.
+  return `${clearLog}; ( trap 'kill 0' INT TERM EXIT; (${cfg.command}) & (${tunnelCmd}) & wait )`;
 }
 
-export function PlayBar({ token, terminalRef, onRequestTerminalTab }: PlayBarProps) {
+export function PlayBar({
+  token,
+  terminalRef,
+  terminalSessionNames,
+  onRequestTerminalTab,
+}: PlayBarProps) {
   const [config, setConfig] = useState<PlayConfig | null>(() => loadConfig());
   const [showModal, setShowModal] = useState(false);
   const [draft, setDraft] = useState<PlayConfig>({ command: "", port: 3000, tunnel: "cloudflared" });
   const [running, setRunning] = useState(false);
   const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
+  const pollTimeoutRef = useRef<number | null>(null);
 
   // When the user opens the modal, seed the draft from saved config or
   // autodetect. Autodetect only runs when there's no saved config.
@@ -114,6 +127,10 @@ export function PlayBar({ token, terminalRef, onRequestTerminalTab }: PlayBarPro
       window.clearInterval(pollRef.current);
       pollRef.current = null;
     }
+    if (pollTimeoutRef.current != null) {
+      window.clearTimeout(pollTimeoutRef.current);
+      pollTimeoutRef.current = null;
+    }
   }, []);
 
   const startPolling = useCallback(() => {
@@ -132,9 +149,24 @@ export function PlayBar({ token, terminalRef, onRequestTerminalTab }: PlayBarPro
         }
       } catch {}
     }, 1000);
+    pollTimeoutRef.current = window.setTimeout(() => {
+      stopPolling();
+    }, TUNNEL_POLL_TIMEOUT_MS);
   }, [stopPolling, token]);
 
   useEffect(() => () => stopPolling(), [stopPolling]);
+
+  // If the Play terminal disappears (user closed the tab, process
+  // crashed and server reaped the pty, etc.) reset local state so the
+  // button stops saying "Detener".
+  useEffect(() => {
+    if (!running) return;
+    if (!terminalSessionNames.includes(PLAY_TERMINAL_NAME)) {
+      setRunning(false);
+      setTunnelUrl(null);
+      stopPolling();
+    }
+  }, [running, stopPolling, terminalSessionNames]);
 
   const doPlay = useCallback(
     (cfg: PlayConfig) => {
@@ -180,11 +212,9 @@ export function PlayBar({ token, terminalRef, onRequestTerminalTab }: PlayBarPro
     navigator.clipboard?.writeText(tunnelUrl).catch(() => {});
   }, [tunnelUrl]);
 
-  const label = useMemo(() => {
-    if (running && !tunnelUrl && config?.tunnel === "cloudflared") return "Iniciando…";
-    if (running) return "Detener";
-    return "Play";
-  }, [config, running, tunnelUrl]);
+  const waitingForTunnel =
+    running && !tunnelUrl && config?.tunnel === "cloudflared";
+  const label = running ? (waitingForTunnel ? "Iniciando…" : "Detener") : "Play";
 
   return (
     <>

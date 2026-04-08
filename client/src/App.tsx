@@ -33,6 +33,7 @@ export default function App() {
   const [openFile, setOpenFile] = useState<FsEntry | null>(null);
   const [editorDirty, setEditorDirty] = useState(false);
   const terminalRef = useRef<TerminalHandle>(null);
+  const [terminalSessionNames, setTerminalSessionNames] = useState<string[]>([]);
   const switchToTerminal = useCallback(() => {
     setRightTab("terminal");
     setMobileTab("terminal");
@@ -265,6 +266,7 @@ export default function App() {
           <PlayBar
             token={token}
             terminalRef={terminalRef}
+            terminalSessionNames={terminalSessionNames}
             onRequestTerminalTab={switchToTerminal}
           />
 
@@ -294,7 +296,11 @@ export default function App() {
             </div>
           </div>
           <div className={rightTab === "terminal" ? "h-full" : "hidden"}>
-            <Terminal token={token} ref={terminalRef} />
+            <Terminal
+              token={token}
+              ref={terminalRef}
+              onSessionsChange={setTerminalSessionNames}
+            />
           </div>
           <div className={rightTab === "theme" ? "h-full" : "hidden"}>
             <ThemeCustomizer
