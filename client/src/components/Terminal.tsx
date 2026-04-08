@@ -76,7 +76,11 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
   const pendingClosedRef = useRef<Set<string>>(new Set());
 
   const updateSessionState = useCallback(() => {
-    setSessions(sessionsRef.current.map((s) => ({ id: s.id, name: s.name, connected: s.connected })));
+    setSessions(
+      sessionsRef.current
+        .filter((s) => !s.closedLocally)
+        .map((s) => ({ id: s.id, name: s.name, connected: s.connected }))
+    );
   }, []);
 
   const connectSession = useCallback(
@@ -363,13 +367,16 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     try { session.observer.disconnect(); } catch {}
     try { session.term.dispose(); } catch {}
     try { session.containerEl.remove(); } catch {}
+    const idx = sessionsRef.current.findIndex((s) => s.id === session.id);
+    if (idx !== -1) sessionsRef.current.splice(idx, 1);
   }, []);
 
   const closeSession = useCallback(
     (id: number) => {
       const idx = sessionsRef.current.findIndex((s) => s.id === id);
       if (idx === -1) return;
-      if (sessionsRef.current.length <= 1) return;
+      const visibleCount = sessionsRef.current.filter((s) => !s.closedLocally).length;
+      if (visibleCount <= 1) return;
 
       const session = sessionsRef.current[idx];
       session.closedLocally = true;
@@ -391,14 +398,19 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       // cleanup once we know the id.
       const isConnecting = session.ws?.readyState === WebSocket.CONNECTING;
       if (isConnecting) {
+        // Keep the session in sessionsRef so reconcileRemoteSessions sees
+        // hasPendingLocal=true and other tabs don't recreate this terminal
+        // when the server broadcasts sessions_sync. It's hidden from the UI
+        // via updateSessionState's closedLocally filter. finalizeDeferredClose
+        // will splice it out once session_meta arrives (or the ws errors).
         session.deferredTeardown = true;
         session.containerEl.style.display = "none";
-        sessionsRef.current.splice(idx, 1);
         updateSessionState();
         setActiveId((current) => {
           if (current !== id) return current;
-          const newIdx = Math.min(idx, sessionsRef.current.length - 1);
-          return sessionsRef.current[newIdx]?.id ?? null;
+          const visible = sessionsRef.current.filter((s) => !s.closedLocally);
+          const fallbackIdx = Math.min(idx, visible.length - 1);
+          return visible[fallbackIdx]?.id ?? null;
         });
         return;
       }
