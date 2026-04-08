@@ -64,10 +64,14 @@ interface ContextMenuState {
 interface FileExplorerProps {
   token: string;
   onOpenFile?: (entry: FsEntry) => void;
+  onCurrentPathChange?: (path: string) => void;
 }
 
-export function FileExplorer({ token, onOpenFile }: FileExplorerProps) {
+export function FileExplorer({ token, onOpenFile, onCurrentPathChange }: FileExplorerProps) {
   const [currentPath, setCurrentPath] = useState("/");
+  useEffect(() => {
+    onCurrentPathChange?.(currentPath);
+  }, [currentPath, onCurrentPathChange]);
   const [entries, setEntries] = useState<FsEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<FsEntry | null>(null);

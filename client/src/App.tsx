@@ -34,6 +34,7 @@ export default function App() {
   const [editorDirty, setEditorDirty] = useState(false);
   const terminalRef = useRef<TerminalHandle>(null);
   const [terminalSessionNames, setTerminalSessionNames] = useState<string[]>([]);
+  const [fsCurrentPath, setFsCurrentPath] = useState("/");
   const switchToTerminal = useCallback(() => {
     setRightTab("terminal");
     setMobileTab("terminal");
@@ -198,7 +199,11 @@ export default function App() {
         } h-full overflow-hidden flex-col ide-panel`}
         style={!isMobile && !filesCollapsed ? { width: `${dividerX}%` } : undefined}
       >
-        <FileExplorer token={token} onOpenFile={handleOpenFile} />
+        <FileExplorer
+          token={token}
+          onOpenFile={handleOpenFile}
+          onCurrentPathChange={setFsCurrentPath}
+        />
       </div>
 
       {!filesCollapsed && (
@@ -267,6 +272,7 @@ export default function App() {
             token={token}
             terminalRef={terminalRef}
             terminalSessionNames={terminalSessionNames}
+            defaultCwd={fsCurrentPath}
             onRequestTerminalTab={switchToTerminal}
           />
 

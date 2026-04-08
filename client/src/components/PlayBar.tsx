@@ -5,6 +5,13 @@ interface PlayBarProps {
   token: string;
   terminalRef: React.RefObject<TerminalHandle>;
   terminalSessionNames: string[];
+  /**
+   * The folder currently focused in the file explorer. Used as the
+   * default cwd when the Play config modal opens for the first time,
+   * so `npm run dev` runs in the user's project instead of wherever
+   * the mini-ide server happens to be running.
+   */
+  defaultCwd: string;
   onRequestTerminalTab: () => void;
 }
 
@@ -17,6 +24,7 @@ interface PlayConfig {
   command: string;
   port: number;
   tunnel: "cloudflared" | "none";
+  cwd: string;
 }
 
 const STORAGE_KEY = "ide_play_config_v1";
@@ -36,20 +44,26 @@ function loadConfig(): PlayConfig | null {
         command: parsed.command,
         port: parsed.port,
         tunnel: parsed.tunnel === "none" ? "none" : "cloudflared",
+        cwd: typeof parsed.cwd === "string" && parsed.cwd ? parsed.cwd : "/",
       };
     }
   } catch {}
   return null;
 }
 
+// Escape a path for safe inclusion inside a bash double-quoted string.
+function bashDoubleQuote(path: string): string {
+  return `"${path.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\$/g, "\\$").replace(/`/g, "\\`")}"`;
+}
+
 function saveConfig(cfg: PlayConfig) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
 }
 
-// Best-effort autodetect based on files at the project root.
-async function detectPreset(token: string): Promise<Partial<PlayConfig>> {
+// Best-effort autodetect based on files in the chosen project folder.
+async function detectPreset(token: string, cwd: string): Promise<Partial<PlayConfig>> {
   try {
-    const res = await fetch("/api/fs/list?path=.", {
+    const res = await fetch(`/api/fs/list?path=${encodeURIComponent(cwd)}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) return {};
@@ -83,24 +97,31 @@ async function detectPreset(token: string): Promise<Partial<PlayConfig>> {
 // is handled naturally by the shell.
 function buildPlayCommand(cfg: PlayConfig): string {
   const clearLog = `: > ${TUNNEL_LOG_PATH}`;
+  const cdCmd = `cd ${bashDoubleQuote(cfg.cwd || "/")}`;
   if (cfg.tunnel === "none") {
-    return `${clearLog}; ${cfg.command}`;
+    return `${clearLog}; ${cdCmd} && ${cfg.command}`;
   }
   const tunnelCmd = `cloudflared tunnel --url http://localhost:${cfg.port} 2>&1 | tee -a ${TUNNEL_LOG_PATH}`;
   // Subshell + trap so Ctrl+C tears down the whole process group and
   // the trap doesn't leak into the user's interactive shell afterwards.
-  return `${clearLog}; ( trap 'kill 0' INT TERM EXIT; (${cfg.command}) & (${tunnelCmd}) & wait )`;
+  return `${clearLog}; ( ${cdCmd} && trap 'kill 0' INT TERM EXIT; (${cfg.command}) & (${tunnelCmd}) & wait )`;
 }
 
 export function PlayBar({
   token,
   terminalRef,
   terminalSessionNames,
+  defaultCwd,
   onRequestTerminalTab,
 }: PlayBarProps) {
   const [config, setConfig] = useState<PlayConfig | null>(() => loadConfig());
   const [showModal, setShowModal] = useState(false);
-  const [draft, setDraft] = useState<PlayConfig>({ command: "", port: 3000, tunnel: "cloudflared" });
+  const [draft, setDraft] = useState<PlayConfig>({
+    command: "",
+    port: 3000,
+    tunnel: "cloudflared",
+    cwd: "/",
+  });
   const [running, setRunning] = useState(false);
   const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
@@ -109,18 +130,20 @@ export function PlayBar({
   // When the user opens the modal, seed the draft from saved config or
   // autodetect. Autodetect only runs when there's no saved config.
   const openModal = useCallback(async () => {
+    const seedCwd = (config?.cwd && config.cwd !== "/" ? config.cwd : defaultCwd) || "/";
     if (config) {
-      setDraft(config);
+      setDraft({ ...config, cwd: seedCwd });
     } else {
-      const preset = await detectPreset(token);
+      const preset = await detectPreset(token, seedCwd);
       setDraft({
         command: preset.command ?? "npm run dev",
         port: preset.port ?? 3000,
         tunnel: "cloudflared",
+        cwd: seedCwd,
       });
     }
     setShowModal(true);
-  }, [config, token]);
+  }, [config, defaultCwd, token]);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current != null) {
@@ -203,6 +226,7 @@ export function PlayBar({
   const submitModal = useCallback(() => {
     if (!draft.command.trim()) return;
     if (!Number.isFinite(draft.port) || draft.port <= 0) return;
+    if (!draft.cwd.trim()) return;
     setShowModal(false);
     doPlay(draft);
   }, [doPlay, draft]);
@@ -275,6 +299,24 @@ export function PlayBar({
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-sm font-semibold mb-3">Configurar Play</h2>
+            <label className="block text-xs mb-1 opacity-70">Directorio del proyecto</label>
+            <div className="flex gap-2 mb-3">
+              <input
+                type="text"
+                value={draft.cwd}
+                onChange={(e) => setDraft({ ...draft, cwd: e.target.value })}
+                placeholder="/ruta/al/proyecto"
+                className="flex-1 px-2 py-1.5 text-xs rounded ide-tab font-mono"
+              />
+              <button
+                type="button"
+                onClick={() => setDraft({ ...draft, cwd: defaultCwd || "/" })}
+                title="Usar la carpeta seleccionada en el explorador"
+                className="px-2 py-1 text-xs rounded ide-tab transition-colors"
+              >
+                Usar actual
+              </button>
+            </div>
             <label className="block text-xs mb-1 opacity-70">Comando</label>
             <input
               type="text"
