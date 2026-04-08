@@ -300,8 +300,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       updateSessionState();
       setActiveId((current) => {
         if (current !== id) return current;
-        const newIdx = Math.min(idx, sessionsRef.current.length - 1);
-        return sessionsRef.current[newIdx]?.id ?? null;
+        const visible = sessionsRef.current.filter((s) => !s.closedLocally);
+        const fallbackIdx = Math.min(idx, visible.length - 1);
+        return visible[fallbackIdx]?.id ?? null;
       });
     },
     [updateSessionState]
@@ -433,8 +434,12 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
 
       setActiveId((current) => {
         if (current !== id) return current;
-        const newIdx = Math.min(idx, sessionsRef.current.length - 1);
-        return sessionsRef.current[newIdx]?.id ?? null;
+        // Skip deferred-close "ghost" sessions still sitting in sessionsRef
+        // waiting for their session_meta — activating one would show an
+        // empty pane.
+        const visible = sessionsRef.current.filter((s) => !s.closedLocally);
+        const fallbackIdx = Math.min(idx, visible.length - 1);
+        return visible[fallbackIdx]?.id ?? null;
       });
     },
     [token, updateSessionState]
