@@ -23,6 +23,7 @@ interface TermSession {
   observer: ResizeObserver;
   reconnectTimer: number | null;
   shouldReconnect: boolean;
+  closedLocally: boolean;
 }
 
 interface RemoteSessionInfo {
@@ -115,6 +116,16 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
             if (typeof msg.sessionId === "string") session.serverSessionId = msg.sessionId;
             if (typeof msg.name === "string") session.name = msg.name;
             updateSessionState();
+            // The user already clicked X before the server assigned us
+            // an id. Kill the orphan pty now so it doesn't show up in
+            // the next sessions_sync and get recreated.
+            if (session.closedLocally && typeof msg.sessionId === "string") {
+              pendingClosedRef.current.add(msg.sessionId);
+              try {
+                ws.send(JSON.stringify({ type: "close_session" }));
+              } catch {}
+              try { ws.close(); } catch {}
+            }
             return;
           }
           if (msg.type === "sessions_sync") {
@@ -218,6 +229,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
         observer,
         reconnectTimer: null,
         shouldReconnect: true,
+        closedLocally: false,
       };
 
       const textEncoder = new TextEncoder();
@@ -339,6 +351,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       if (sessionsRef.current.length <= 1) return;
 
       const session = sessionsRef.current[idx];
+      session.closedLocally = true;
       if (session.serverSessionId) {
         pendingClosedRef.current.add(session.serverSessionId);
       }
