@@ -2,7 +2,13 @@ FROM node:20-bookworm
 
 # Build tools for node-pty + basic utilities
 RUN apt-get update && apt-get install -y \
-    build-essential python3 git curl wget vim nano sudo gosu unzip \
+    build-essential python3 python3-pip python3-venv \
+    git curl wget vim nano sudo gosu unzip zip \
+    bubblewrap \
+    ca-certificates openssh-client \
+    jq less tree rsync tmux htop \
+    make pkg-config \
+    net-tools iputils-ping dnsutils \
     && rm -rf /var/lib/apt/lists/*
 
 # Install AWS CLI v2 (arch-aware)
