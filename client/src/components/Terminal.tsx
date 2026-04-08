@@ -9,6 +9,8 @@ export interface TerminalProps {
 
 export interface TerminalHandle {
   sendCommand: (cmd: string) => void;
+  runInNewSession: (name: string, command: string) => void;
+  interruptSession: (name: string) => void;
 }
 
 interface TermSession {
@@ -25,6 +27,7 @@ interface TermSession {
   shouldReconnect: boolean;
   closedLocally: boolean;
   deferredTeardown: boolean;
+  pendingInitialCommand: string | null;
 }
 
 interface RemoteSessionInfo {
@@ -68,7 +71,10 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
   const [renameValue, setRenameValue] = useState("");
   const [showShortcuts, setShowShortcuts] = useState(false);
   const createSessionRef = useRef<
-    ((name?: string, options?: { serverSessionId?: string | null; activate?: boolean }) => TermSession) | null
+    ((
+      name?: string,
+      options?: { serverSessionId?: string | null; activate?: boolean; initialCommand?: string }
+    ) => TermSession) | null
   >(null);
   const reconcileRemoteSessionsRef = useRef<((remoteSessions: RemoteSessionInfo[]) => void) | null>(null);
   // serverSessionIds the user closed locally but whose close hasn't been
@@ -105,6 +111,16 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
         session.connected = true;
         updateSessionState();
         ws.send(JSON.stringify({ type: "resize", cols: session.term.cols, rows: session.term.rows }));
+        if (session.pendingInitialCommand) {
+          // Small delay so the shell prompt is ready before we type.
+          const cmd = session.pendingInitialCommand;
+          session.pendingInitialCommand = null;
+          setTimeout(() => {
+            if (session.ws?.readyState === WebSocket.OPEN) {
+              session.ws.send(JSON.stringify({ type: "input", data: cmd + "\n" }));
+            }
+          }, 250);
+        }
       };
 
       ws.binaryType = "arraybuffer";
@@ -193,7 +209,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
   const createSession = useCallback(
     (
       name?: string,
-      options?: { serverSessionId?: string | null; activate?: boolean }
+      options?: { serverSessionId?: string | null; activate?: boolean; initialCommand?: string }
     ) => {
       const id = nextId++;
       const containerEl = document.createElement("div");
@@ -250,6 +266,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
         shouldReconnect: true,
         closedLocally: false,
         deferredTeardown: false,
+        pendingInitialCommand: options?.initialCommand ?? null,
       };
 
       const textEncoder = new TextEncoder();
@@ -461,6 +478,37 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
   useImperativeHandle(ref, () => ({
     sendCommand: (cmd: string) => {
       sendToActive(cmd + "\n");
+    },
+    runInNewSession: (name: string, command: string) => {
+      // If a session with this name already exists, reuse the slot so
+      // repeated Play clicks don't stack "Play (1)", "Play (2)", etc.
+      const existing = sessionsRef.current.find((s) => s.name === name && !s.closedLocally);
+      if (existing) {
+        setActiveId(existing.id);
+        if (existing.ws?.readyState === WebSocket.OPEN) {
+          // Ctrl+C first to interrupt whatever was running, then run the
+          // new command once the shell has a fresh prompt.
+          existing.ws.send(JSON.stringify({ type: "input", data: "\x03" }));
+          setTimeout(() => {
+            if (existing.ws?.readyState === WebSocket.OPEN) {
+              existing.ws.send(JSON.stringify({ type: "input", data: command + "\n" }));
+            }
+          }, 150);
+        } else {
+          // ws not open yet — queue the command for when it connects.
+          existing.pendingInitialCommand = command;
+        }
+        return;
+      }
+      createSession(name, { initialCommand: command, activate: true });
+    },
+    interruptSession: (name: string) => {
+      const existing = sessionsRef.current.find((s) => s.name === name && !s.closedLocally);
+      if (!existing) return;
+      setActiveId(existing.id);
+      if (existing.ws?.readyState === WebSocket.OPEN) {
+        existing.ws.send(JSON.stringify({ type: "input", data: "\x03" }));
+      }
     },
   }));
 

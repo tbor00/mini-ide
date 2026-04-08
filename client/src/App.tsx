@@ -1,6 +1,7 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { FileExplorer } from "./components/FileExplorer";
-import { Terminal } from "./components/Terminal";
+import { Terminal, TerminalHandle } from "./components/Terminal";
+import { PlayBar } from "./components/PlayBar";
 import { CodeEditor } from "./components/CodeEditor";
 import { EditorTabs } from "./components/EditorTabs";
 import { LoginScreen } from "./components/LoginScreen";
@@ -31,6 +32,11 @@ export default function App() {
   const [theme, setTheme] = useState<IdeTheme>(() => loadTheme());
   const [openFile, setOpenFile] = useState<FsEntry | null>(null);
   const [editorDirty, setEditorDirty] = useState(false);
+  const terminalRef = useRef<TerminalHandle>(null);
+  const switchToTerminal = useCallback(() => {
+    setRightTab("terminal");
+    setMobileTab("terminal");
+  }, []);
 
   useEffect(() => {
     applyTheme(theme);
@@ -256,6 +262,12 @@ export default function App() {
 
           <div className="flex-1" />
 
+          <PlayBar
+            token={token}
+            terminalRef={terminalRef}
+            onRequestTerminalTab={switchToTerminal}
+          />
+
           <button
             onClick={() => setShowPreview(true)}
             className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded ide-accent text-white transition-colors"
@@ -282,7 +294,7 @@ export default function App() {
             </div>
           </div>
           <div className={rightTab === "terminal" ? "h-full" : "hidden"}>
-            <Terminal token={token} />
+            <Terminal token={token} ref={terminalRef} />
           </div>
           <div className={rightTab === "theme" ? "h-full" : "hidden"}>
             <ThemeCustomizer
