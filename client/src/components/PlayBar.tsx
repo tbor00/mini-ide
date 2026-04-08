@@ -101,10 +101,25 @@ function buildPlayCommand(cfg: PlayConfig): string {
   if (cfg.tunnel === "none") {
     return `${clearLog}; ${cdCmd} && ${cfg.command}`;
   }
-  const tunnelCmd = `cloudflared tunnel --url http://localhost:${cfg.port} 2>&1 | tee -a ${TUNNEL_LOG_PATH}`;
+  const port = cfg.port;
+  // Probe both IPv4 and IPv6 loopbacks and pick whichever answers
+  // first. Next.js with turbo binds only to [::1] on macOS, so dialing
+  // `localhost` resolves to 127.0.0.1 and times out → cloudflared
+  // returns 530. We wait up to ~30s for the app to come up, then hand
+  // cloudflared the exact host that worked.
+  const probe = [
+    `HOST=""`,
+    `for i in $(seq 1 60); do`,
+    `  if curl -sS -m 1 -o /dev/null "http://127.0.0.1:${port}" 2>/dev/null; then HOST=127.0.0.1; break; fi`,
+    `  if curl -sS -m 1 -o /dev/null "http://[::1]:${port}" 2>/dev/null; then HOST="[::1]"; break; fi`,
+    `  sleep 0.5`,
+    `done`,
+    `if [ -z "$HOST" ]; then HOST=127.0.0.1; echo "[play] timed out waiting for :${port}, defaulting to $HOST"; fi`,
+  ].join("; ");
+  const tunnelCmd = `${probe}; cloudflared tunnel --url "http://$HOST:${port}" 2>&1 | tee -a ${TUNNEL_LOG_PATH}`;
   // Subshell + trap so Ctrl+C tears down the whole process group and
   // the trap doesn't leak into the user's interactive shell afterwards.
-  return `${clearLog}; ( ${cdCmd} && trap 'kill 0' INT TERM EXIT; (${cfg.command}) & (${tunnelCmd}) & wait )`;
+  return `${clearLog}; ( ${cdCmd} && trap 'kill 0' INT TERM EXIT; (${cfg.command}) & ( ${tunnelCmd} ) & wait )`;
 }
 
 export function PlayBar({
