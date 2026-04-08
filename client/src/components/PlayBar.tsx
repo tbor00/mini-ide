@@ -124,8 +124,52 @@ export function PlayBar({
   });
   const [running, setRunning] = useState(false);
   const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
+  const [cwdWarning, setCwdWarning] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
   const pollTimeoutRef = useRef<number | null>(null);
+
+  // When the user is editing the draft, check that the chosen cwd
+  // contains the files the command needs. Specifically, if the command
+  // invokes a Node package manager we warn when there's no package.json
+  // directly in that folder — npm will otherwise walk up the directory
+  // tree and happily run a `dev` script from an unrelated project
+  // (this is exactly how the mini-ide repo ended up being booted when
+  // the user pointed Play at mini-ide/data/).
+  useEffect(() => {
+    if (!showModal) return;
+    let cancelled = false;
+    const cmd = draft.command.trim();
+    const isNodeCmd = /^(npm|pnpm|yarn|bun)\b/.test(cmd);
+    if (!isNodeCmd || !draft.cwd) {
+      setCwdWarning(null);
+      return;
+    }
+    (async () => {
+      try {
+        const res = await fetch(`/api/fs/list?path=${encodeURIComponent(draft.cwd)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          if (!cancelled) setCwdWarning("No se pudo leer el directorio.");
+          return;
+        }
+        const data = await res.json();
+        const entries: Array<{ name: string }> = data?.entries || [];
+        const hasPkg = entries.some((e) => e.name === "package.json");
+        if (cancelled) return;
+        setCwdWarning(
+          hasPkg
+            ? null
+            : "Este directorio no tiene package.json — npm buscará uno en carpetas padre y puede ejecutar otro proyecto."
+        );
+      } catch {
+        if (!cancelled) setCwdWarning(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [draft.command, draft.cwd, showModal, token]);
 
   // When the user opens the modal, seed the draft from saved config or
   // autodetect. Autodetect only runs when there's no saved config.
@@ -317,6 +361,11 @@ export function PlayBar({
                 Usar actual
               </button>
             </div>
+            {cwdWarning && (
+              <div className="mb-3 px-2 py-1.5 text-[11px] rounded bg-amber-500/15 border border-amber-500/40 text-amber-300">
+                ⚠ {cwdWarning}
+              </div>
+            )}
             <label className="block text-xs mb-1 opacity-70">Comando</label>
             <input
               type="text"
