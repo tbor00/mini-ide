@@ -9,7 +9,11 @@ interface TerminalSession {
   ptyProcess: pty.IPty;
   clients: Set<WebSocket>;
   closed: boolean;
+  scrollback: Buffer[];
+  scrollbackBytes: number;
 }
+
+const SCROLLBACK_LIMIT = 256 * 1024; // 256 KB per session
 
 interface SpawnTerminalOptions {
   token: string;
@@ -106,10 +110,20 @@ function createSession(token: string, name?: string): TerminalSession {
     ptyProcess,
     clients: new Set(),
     closed: false,
+    scrollback: [],
+    scrollbackBytes: 0,
   };
 
   ptyProcess.onData((data: string) => {
     const buf = Buffer.from(data, "utf-8");
+    // Keep a rolling scrollback so reconnects/attaches can replay
+    // the last ~256KB of output (shell prompt, in-progress TUI frame, etc.).
+    session.scrollback.push(buf);
+    session.scrollbackBytes += buf.length;
+    while (session.scrollbackBytes > SCROLLBACK_LIMIT && session.scrollback.length > 1) {
+      const dropped = session.scrollback.shift()!;
+      session.scrollbackBytes -= dropped.length;
+    }
     for (const client of session.clients) {
       if (client.readyState === WebSocket.OPEN) {
         client.send(buf, { binary: true, compress: false });
@@ -181,6 +195,12 @@ export function spawnTerminal(ws: WebSocket, options: SpawnTerminalOptions): voi
     name: session.name,
     reconnected,
   });
+  // Replay scrollback so a newly-attached client doesn't see a black
+  // screen when reconnecting to an existing pty.
+  if (session.scrollback.length > 0 && ws.readyState === WebSocket.OPEN) {
+    const replay = Buffer.concat(session.scrollback, session.scrollbackBytes);
+    ws.send(replay, { binary: true, compress: false });
+  }
   // Broadcast AFTER session_meta so the new client has assigned its
   // serverSessionId before any other client's reconcile runs.
   if (!existingSession) {
