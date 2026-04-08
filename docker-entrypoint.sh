@@ -28,13 +28,14 @@ persist_home_path() {
     sudo -u mini-ide mv "$dst" "$src"
   fi
 
-  # Make sure the target exists on the volume.
-  if [ ! -e "$src" ]; then
-    if [ "$kind" = "dir" ]; then
-      sudo -u mini-ide mkdir -p "$src"
-    else
-      sudo -u mini-ide touch "$src"
-    fi
+  # Make sure the target exists on the volume. For directories we create
+  # them eagerly. For files we deliberately do NOT touch an empty file —
+  # some CLIs (Claude Code) expect ~/.claude.json to either not exist or
+  # contain valid JSON, and an empty file errors on first run. Leaving
+  # the symlink dangling is fine: writing through it will create the
+  # real file on the volume.
+  if [ "$kind" = "dir" ] && [ ! -e "$src" ]; then
+    sudo -u mini-ide mkdir -p "$src"
   fi
 
   # Replace anything at $dst with a symlink to the volume copy.
