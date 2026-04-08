@@ -32,8 +32,21 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && apt-get update && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code CLI and OpenAI Codex CLI
-RUN npm install -g @anthropic-ai/claude-code @openai/codex
+# Install Claude Code CLI, OpenAI Codex CLI and Pyright (Python LSP)
+RUN npm install -g @anthropic-ai/claude-code @openai/codex pyright
+
+# Install uv + ruff from Astral, system-wide. The installer drops
+# binaries in $CARGO_HOME/bin or ~/.local/bin depending on version, so
+# we just cp whatever ends up there into /usr/local/bin.
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && curl -LsSf https://astral.sh/ruff/install.sh | sh \
+    && cp /root/.local/bin/uv /root/.local/bin/uvx /root/.local/bin/ruff /usr/local/bin/ \
+    && /usr/local/bin/uv --version \
+    && /usr/local/bin/ruff --version
+
+# pipx so the user can install extra Python CLIs on demand
+RUN apt-get update && apt-get install -y pipx && rm -rf /var/lib/apt/lists/* \
+    && pipx ensurepath --global 2>/dev/null || true
 
 # Create user "mini-ide" with full sudo permissions
 RUN useradd -m -s /bin/bash -G sudo mini-ide \
