@@ -69,6 +69,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     ((name?: string, options?: { serverSessionId?: string | null; activate?: boolean }) => TermSession) | null
   >(null);
   const reconcileRemoteSessionsRef = useRef<((remoteSessions: RemoteSessionInfo[]) => void) | null>(null);
+  // serverSessionIds the user closed locally but whose close hasn't been
+  // acknowledged by the server yet. Skip reconcile-recreating them.
+  const pendingClosedRef = useRef<Set<string>>(new Set());
 
   const updateSessionState = useCallback(() => {
     setSessions(sessionsRef.current.map((s) => ({ id: s.id, name: s.name, connected: s.connected })));
@@ -284,6 +287,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       const hasPendingLocal = sessionsRef.current.some((s) => !s.serverSessionId);
       for (const remote of remoteSessions) {
         remoteIds.add(remote.id);
+        // Ignore remotes we're in the middle of closing locally — the
+        // server just hasn't finished processing the close yet.
+        if (pendingClosedRef.current.has(remote.id)) continue;
         const existing = localByRemoteId.get(remote.id);
         if (existing) {
           if (existing.name !== remote.name) {
@@ -309,6 +315,11 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       for (const staleId of staleLocalIds) {
         dropLocalSession(staleId);
       }
+      // Any pendingClosed ids that are no longer in the remote list have
+      // been confirmed closed — forget them.
+      for (const id of Array.from(pendingClosedRef.current)) {
+        if (!remoteIds.has(id)) pendingClosedRef.current.delete(id);
+      }
     },
     [dropLocalSession, updateSessionState]
   );
@@ -324,6 +335,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       if (sessionsRef.current.length <= 1) return;
 
       const session = sessionsRef.current[idx];
+      if (session.serverSessionId) {
+        pendingClosedRef.current.add(session.serverSessionId);
+      }
       session.shouldReconnect = false;
       if (session.reconnectTimer != null) {
         window.clearTimeout(session.reconnectTimer);

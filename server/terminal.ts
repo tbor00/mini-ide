@@ -196,10 +196,18 @@ export function spawnTerminal(ws: WebSocket, options: SpawnTerminalOptions): voi
     reconnected,
   });
   // Replay scrollback so a newly-attached client doesn't see a black
-  // screen when reconnecting to an existing pty.
+  // screen when reconnecting to an existing pty. Strip terminal queries
+  // (Device Attributes, Device Status Report) so xterm.js doesn't
+  // re-answer them on replay — those answers would land in the shell
+  // as stray input like "1;2c".
   if (session.scrollback.length > 0 && ws.readyState === WebSocket.OPEN) {
-    const replay = Buffer.concat(session.scrollback, session.scrollbackBytes);
-    ws.send(replay, { binary: true, compress: false });
+    const replay = Buffer.concat(session.scrollback, session.scrollbackBytes)
+      .toString("utf-8")
+      // CSI ... c  → Device Attributes query (primary/secondary/tertiary)
+      .replace(/\x1b\[[\?>=]?[0-9;]*c/g, "")
+      // CSI ... n  → Device Status Report query
+      .replace(/\x1b\[[0-9;]*n/g, "");
+    ws.send(Buffer.from(replay, "utf-8"), { binary: true, compress: false });
   }
   // Broadcast AFTER session_meta so the new client has assigned its
   // serverSessionId before any other client's reconcile runs.
