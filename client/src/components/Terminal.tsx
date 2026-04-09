@@ -881,24 +881,20 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
         {sessions.map((s) => (
           <div
             key={s.id}
-            className={`flex items-center gap-1.5 rounded cursor-pointer transition-colors shrink-0 ${
-              isMobile ? "px-3 py-2 text-sm min-h-[40px]" : "px-2 py-1 text-xs"
-            } ${
+            className={`flex items-center gap-1 px-2 py-1 text-xs rounded cursor-pointer transition-colors shrink-0 ${
               s.id === activeId ? "bg-blue-800 text-white" : "text-blue-300 hover:bg-blue-800/50 hover:text-white"
             }`}
             onClick={() => setActiveId(s.id)}
           >
             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${s.connected ? "bg-green-400" : "bg-red-400"}`} />
-            <span className={`truncate ${isMobile ? "max-w-[140px]" : "max-w-[100px]"}`}>{s.name}</span>
+            <span className="truncate max-w-[100px]">{s.name}</span>
             {sessions.length > 1 && (
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   closeSession(s.id);
                 }}
-                className={`ml-0.5 flex items-center justify-center rounded hover:bg-blue-700 text-blue-400 hover:text-white transition-colors ${
-                  isMobile ? "w-7 h-7 text-sm" : "w-4 h-4 text-[10px]"
-                }`}
+                className="ml-0.5 w-4 h-4 flex items-center justify-center rounded hover:bg-blue-700 text-blue-400 hover:text-white transition-colors text-[10px]"
                 title="Cerrar terminal"
               >
                 x
@@ -987,66 +983,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
         </button>
       </div>
 
-      <div
-        ref={wrapperRef}
-        className="flex-1 min-h-0 relative"
-        // Reserve space for the mobile special-keys bar at the bottom
-        // so the last lines of terminal output aren't hidden behind
-        // it. Add the safe-area inset so the bar clears the iPhone
-        // home indicator on notched devices.
-        style={
-          isMobile
-            ? { paddingBottom: "calc(48px + env(safe-area-inset-bottom, 0px))" }
-            : undefined
-        }
-      >
-        {isMobile && (
-          // Special-keys bar: the native virtual keyboard on iOS/Android
-          // doesn't expose Tab, Esc, arrow keys, or Ctrl modifiers, so
-          // working in any shell/REPL/editor is painful without these.
-          // The bar sits at the bottom of the terminal pane and sends
-          // the corresponding bytes straight into the active pty.
-          <div
-            className="absolute left-0 right-0 z-30 flex items-center gap-1 px-1.5 py-1 bg-blue-900/80 backdrop-blur border-t border-blue-800 overflow-x-auto"
-            // Push up above the safe-area inset so buttons aren't
-            // covered by the iPhone home indicator.
-            style={{ bottom: "env(safe-area-inset-bottom, 0px)" }}
-          >
-            {[
-              { label: "Esc", data: "\x1b" },
-              { label: "Tab", data: "\t" },
-              { label: "Ctrl+C", data: "\x03" },
-              { label: "Ctrl+D", data: "\x04" },
-              { label: "Ctrl+L", data: "\x0c" },
-              { label: "Ctrl+Z", data: "\x1a" },
-              { label: "↑", data: "\x1b[A" },
-              { label: "↓", data: "\x1b[B" },
-              { label: "←", data: "\x1b[D" },
-              { label: "→", data: "\x1b[C" },
-              { label: "Home", data: "\x1b[H" },
-              { label: "End", data: "\x1b[F" },
-              { label: "|", data: "|" },
-              { label: "/", data: "/" },
-              { label: "~", data: "~" },
-            ].map((k) => (
-              <button
-                key={k.label}
-                type="button"
-                // tabIndex=-1 keeps the button out of the focus order,
-                // which is what actually prevents iOS from blurring the
-                // terminal (and dismissing the virtual keyboard) when
-                // tapped. preventDefault on mouse/touch events is
-                // unreliable: React's touchstart is passive, and iOS
-                // focuses on touchstart before mousedown fires.
-                tabIndex={-1}
-                onClick={() => sendToActive(k.data)}
-                className="shrink-0 min-w-[40px] h-9 px-2 rounded bg-blue-800/60 active:bg-blue-700 text-blue-100 text-xs font-medium transition-colors select-none"
-              >
-                {k.label}
-              </button>
-            ))}
-          </div>
-        )}
+      <div ref={wrapperRef} className="flex-1 min-h-0 relative">
         {isMobile && scrolledUp && (
           <button
             onClick={() => {
@@ -1055,11 +992,12 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
               active.term.scrollToBottom();
               setScrolledUp(false);
             }}
-            className="absolute right-3 bottom-14 z-40 w-11 h-11 rounded-full bg-blue-600/90 text-white shadow-lg backdrop-blur flex items-center justify-center active:scale-95 transition-transform"
+            className="absolute right-2 z-40 w-8 h-8 rounded-full bg-blue-600/90 text-white shadow-lg backdrop-blur flex items-center justify-center active:scale-95 transition-transform"
+            style={{ bottom: "calc(8px + env(safe-area-inset-bottom, 0px))" }}
             title="Ir al final"
             aria-label="Ir al final de la terminal"
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
             </svg>
           </button>
