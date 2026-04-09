@@ -639,46 +639,6 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     [activeId]
   );
 
-  // Mobile copy: xterm's touch-based selection is unreliable on iOS
-  // because the canvas absorbs touch events. So we expose copy as an
-  // explicit action: prefer the current xterm selection if any;
-  // otherwise fall back to copying the visible viewport text so the
-  // user gets *something* useful when they hit the button.
-  const copyFromActive = useCallback(async () => {
-    const session = sessionsRef.current.find((s) => s.id === activeId);
-    if (!session) return;
-    let text = "";
-    try {
-      text = session.term.getSelection();
-    } catch {}
-    if (!text) {
-      try {
-        const buf = session.term.buffer.active;
-        const rows = session.term.rows;
-        const lines: string[] = [];
-        for (let y = buf.viewportY; y < buf.viewportY + rows; y++) {
-          const line = buf.getLine(y);
-          if (line) lines.push(line.translateToString(true));
-        }
-        text = lines.join("\n").replace(/\s+$/g, "");
-      } catch {}
-    }
-    if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {}
-  }, [activeId]);
-
-  // Mobile paste: read the clipboard and stream it into the active
-  // pty as raw input. iOS prompts the user for permission the first
-  // time — after that it just works.
-  const pasteToActive = useCallback(async () => {
-    try {
-      const text = await navigator.clipboard.readText();
-      if (text) sendToActive(text);
-    } catch {}
-  }, [sendToActive]);
-
   useImperativeHandle(ref, () => ({
     sendCommand: (cmd: string) => {
       sendToActive(cmd + "\n");
@@ -1043,40 +1003,6 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       </div>
 
       <div ref={wrapperRef} className="flex-1 min-h-0 relative">
-        {isMobile && (
-          // Floating copy/paste actions — xterm's touch selection is
-          // broken enough on iOS that providing explicit buttons is
-          // the only reliable path. Stacked above the jump-to-bottom
-          // button so all mobile actions live in the same corner.
-          <div
-            className="absolute right-2 z-40 flex flex-col gap-1.5"
-            style={{ bottom: "calc(64px + env(safe-area-inset-bottom, 0px))" }}
-          >
-            <button
-              type="button"
-              onClick={pasteToActive}
-              title="Pegar del portapapeles"
-              aria-label="Pegar"
-              className="w-7 h-7 rounded-full bg-slate-700/85 text-white shadow-lg backdrop-blur flex items-center justify-center active:scale-95 transition-transform"
-            >
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={copyFromActive}
-              title="Copiar (seleccion o pantalla visible)"
-              aria-label="Copiar"
-              className="w-7 h-7 rounded-full bg-slate-700/85 text-white shadow-lg backdrop-blur flex items-center justify-center active:scale-95 transition-transform"
-            >
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <rect x="9" y="9" width="13" height="13" rx="2" />
-                <path d="M5 15V5a2 2 0 012-2h10" />
-              </svg>
-            </button>
-          </div>
-        )}
         {isMobile && scrolledUp && (
           <button
             onClick={() => {
