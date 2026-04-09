@@ -518,7 +518,28 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       if (!existing) return;
       setActiveId(existing.id);
       if (existing.ws?.readyState === WebSocket.OPEN) {
-        existing.ws.send(JSON.stringify({ type: "input", data: "\x03" }));
+        // Ctrl+C to kill the foreground process group, then destroy
+        // the pty outright so the session disappears from the terminal
+        // list. Sending just Ctrl+C leaves bash alive and the "Play"
+        // session sticks around forever, which keeps the PlayBar in
+        // the "running" state because it derives running from the
+        // session list. close_session is handled server-side by
+        // destroySession, which broadcasts session_closed and reaps
+        // the pty.
+        try {
+          existing.ws.send(JSON.stringify({ type: "input", data: "\x03" }));
+        } catch {}
+        const ws = existing.ws;
+        if (existing.serverSessionId) {
+          pendingClosedRef.current.add(existing.serverSessionId);
+        }
+        setTimeout(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            try {
+              ws.send(JSON.stringify({ type: "close_session" }));
+            } catch {}
+          }
+        }, 150);
       }
     },
   }));
