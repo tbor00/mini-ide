@@ -18,6 +18,12 @@ html,
 body,
 #root {
   height: 100%;
+  /* Prevent mobile Safari/Chrome from auto-inflating text. Without
+     this, xterm's hidden measurement element gets text-size-adjusted
+     and the terminal calculates character widths at 2x, rendering
+     everything at double size on phones. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {

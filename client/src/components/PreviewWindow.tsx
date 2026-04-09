@@ -1,4 +1,5 @@
 import { useRef, useState, useCallback } from "react";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 const DEFAULT_URL = "https://example.com/";
 
@@ -35,6 +36,7 @@ function normalizePreviewUrl(rawInput: string): string {
 export function PreviewWindow({ onClose }: PreviewWindowProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [url, setUrl] = useState(DEFAULT_URL);
+  useEscapeKey(true, onClose);
 
   const handleRefresh = useCallback(() => {
     if (iframeRef.current) {

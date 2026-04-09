@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { FsEntry } from "../types";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 interface Props {
   file: FsEntry;
@@ -17,6 +18,12 @@ export function FilePreviewModal({ file, fileType, token, onClose, onDelete, onS
   const [loading, setLoading] = useState(true);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showSaveConfirm, setShowSaveConfirm] = useState(false);
+  // Escape priority: sub-confirm dialogs close first if open,
+  // otherwise Escape closes the whole modal. Each hook only fires
+  // when its `active` flag is true, so there's no race.
+  useEscapeKey(showDeleteConfirm, () => setShowDeleteConfirm(false));
+  useEscapeKey(showSaveConfirm, () => setShowSaveConfirm(false));
+  useEscapeKey(!showDeleteConfirm && !showSaveConfirm, onClose);
 
   useEffect(() => {
     if (fileType === "text") {

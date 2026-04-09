@@ -1,7 +1,20 @@
 import { useEffect, useRef, useCallback, useState, useImperativeHandle, forwardRef } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebglAddon } from "@xterm/addon-webgl";
+import { CanvasAddon } from "@xterm/addon-canvas";
 import "@xterm/xterm/css/xterm.css";
+import { useEscapeKey } from "../hooks/useEscapeKey";
+
+// Mobile detection: coarse pointer OR narrow viewport. We use it once
+// at module load for xterm config (font/line-height) and again in the
+// render to tweak padding and touch targets. A touch device reporting
+// a desktop-wide viewport (iPad in landscape) still gets mobile-grade
+// touch behavior, which is what we want.
+const isMobileViewport = () =>
+  typeof window !== "undefined" &&
+  (window.matchMedia?.("(pointer: coarse)").matches ||
+    window.matchMedia?.("(max-width: 768px)").matches);
 
 export interface TerminalProps {
   token: string;
@@ -24,6 +37,7 @@ interface TermSession {
   connected: boolean;
   containerEl: HTMLDivElement;
   observer: ResizeObserver;
+  onResizeEnd: (() => void) | null;
   reconnectTimer: number | null;
   shouldReconnect: boolean;
   closedLocally: boolean;
@@ -76,11 +90,32 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     onSessionsChangeRef.current?.(sessions.map((s) => s.name));
   }, [sessions]);
   const [activeId, setActiveId] = useState<number | null>(null);
+  const activeIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
   const [showInputOverlay, setShowInputOverlay] = useState(false);
   const [overlayText, setOverlayText] = useState("");
   const [showRenameDialog, setShowRenameDialog] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [showShortcuts, setShowShortcuts] = useState(false);
+  useEscapeKey(showShortcuts, () => setShowShortcuts(false));
+  useEscapeKey(showRenameDialog, () => setShowRenameDialog(false));
+  useEscapeKey(showInputOverlay, () => {
+    setOverlayText("");
+    setShowInputOverlay(false);
+  });
+  // True when the active terminal is scrolled up from the bottom. Used
+  // to show a "jump to bottom" button on mobile, where dragging the
+  // xterm viewport all the way down is frustratingly unreliable.
+  const [scrolledUp, setScrolledUp] = useState(false);
+  const [isMobile, setIsMobile] = useState(isMobileViewport);
+  useEffect(() => {
+    const mq = window.matchMedia("(pointer: coarse), (max-width: 768px)");
+    const handler = () => setIsMobile(isMobileViewport());
+    mq.addEventListener?.("change", handler);
+    return () => mq.removeEventListener?.("change", handler);
+  }, []);
   const createSessionRef = useRef<
     ((
       name?: string,
@@ -223,14 +258,35 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       options?: { serverSessionId?: string | null; activate?: boolean; initialCommand?: string }
     ) => {
       const id = nextId++;
+      const mobile = isMobileViewport();
       const containerEl = document.createElement("div");
-      containerEl.style.cssText = "width:100%;height:100%;display:none;padding:4px;";
+      // Extra horizontal padding on mobile keeps characters away from
+      // the edge of the viewport so the last column isn't clipped by
+      // safe-area insets on notched phones.
+      containerEl.style.cssText = `width:100%;height:100%;display:none;padding:${mobile ? "8px 10px" : "4px"};`;
 
       const term = new XTerm({
         cursorBlink: true,
+        // Keep the same metrics on mobile as on desktop. Earlier we
+        // bumped fontSize/lineHeight/letterSpacing for "readability",
+        // but WebGL/Canvas renderers don't play well with non-unit
+        // lineHeight and fractional letterSpacing — they end up
+        // drawing characters 2x larger than requested and the first
+        // line scrolls out of view. The extra breathing room on
+        // mobile comes from the containerEl's padding instead.
         fontSize: 14,
+        lineHeight: 1.0,
+        letterSpacing: 0,
         fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
         theme: TERM_THEME,
+        // Crank up touch scroll so a single swipe actually moves a
+        // useful amount of lines. The default (1) feels glued on a
+        // phone where swipes are short.
+        scrollSensitivity: mobile ? 3 : 1,
+        fastScrollSensitivity: mobile ? 8 : 5,
+        // Larger scrollback buffer — on a phone you can't open another
+        // terminal side-by-side to keep context, so history matters.
+        scrollback: 5000,
       });
 
       const fitAddon = new FitAddon();
@@ -244,15 +300,91 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       // Don't fit yet — containerEl is display:none so width is 0. The
       // activate effect will fit once the terminal becomes visible.
 
-      const observer = new ResizeObserver(() => {
-        // Skip when hidden or when an ancestor is display:none (clientWidth
-        // collapses to 0). Fitting at width 0 locks xterm to 1-2 cols and
-        // the narrow state sticks when the parent becomes visible again.
+      // Try WebGL first (5-10x faster on mobile GPUs than the DOM
+      // renderer), fall back to Canvas, fall back to DOM if both blow
+      // up. IMPORTANT: both WebglAddon and CanvasAddon must be loaded
+      // *after* `term.open()` — they attach to the rendering surface
+      // that open() creates, and loading them before is a silent
+      // no-op on some browsers and throws on others.
+      // WebGL can lose its context (OS kills the GL context when the
+      // tab goes background); dispose the addon so xterm falls back
+      // to DOM rendering instead of freezing.
+      try {
+        const webgl = new WebglAddon();
+        webgl.onContextLoss(() => {
+          try { webgl.dispose(); } catch {}
+        });
+        term.loadAddon(webgl);
+      } catch {
+        try {
+          term.loadAddon(new CanvasAddon());
+        } catch {
+          // Fall back to DOM renderer — nothing to do, it's the default.
+        }
+      }
+
+      // On iOS/Android the xterm viewport element sometimes refuses
+      // to scroll when the swipe starts on the canvas: browsers
+      // require `touch-action` to be declared for panning to be
+      // forwarded to the nearest scrollable ancestor reliably.
+      // `-webkit-overflow-scrolling: touch` enables momentum scroll
+      // on iOS. Applied to the viewport (xterm's internal scroller).
+      const viewport = containerEl.querySelector<HTMLElement>(".xterm-viewport");
+      if (viewport) {
+        viewport.style.touchAction = "pan-y";
+        viewport.style.setProperty("-webkit-overflow-scrolling", "touch");
+        viewport.style.overscrollBehavior = "contain";
+      }
+
+      // Track whether the user scrolled up from the bottom so the
+      // mobile "jump to bottom" button can hide itself once they're
+      // already at the tail. Only the *active* terminal drives this
+      // state — we compare ids in the callback.
+      term.onScroll(() => {
+        const atBottom = term.buffer.active.viewportY >= term.buffer.active.baseY - 1;
+        if (activeIdRef.current === id) {
+          setScrolledUp(!atBottom);
+        }
+      });
+
+      // fitAddon.fit() is expensive (layout math + resize message to
+      // the pty + canvas re-create for WebGL). Two guards here:
+      //
+      // 1. Coalesce ResizeObserver bursts into 1 fit per animation
+      //    frame so a window resize doesn't fire 30 fits.
+      // 2. While the IDE divider is being dragged
+      //    (document.body[data-ide-resizing]) skip fits ENTIRELY.
+      //    Running fit() at 60Hz against a WebGL canvas causes a
+      //    visible flicker as the canvas clears each frame. We
+      //    catch up with a single fit on the "ide:resize-end" event
+      //    once the user releases the mouse.
+      let fitRafPending = false;
+      const runFit = () => {
         if (containerEl.style.display === "none") return;
         if (containerEl.clientWidth === 0 || containerEl.clientHeight === 0) return;
-        fitAddon.fit();
+        try { fitAddon.fit(); } catch {}
+      };
+      const scheduleFit = () => {
+        if (fitRafPending) return;
+        fitRafPending = true;
+        requestAnimationFrame(() => {
+          fitRafPending = false;
+          runFit();
+        });
+      };
+      const observer = new ResizeObserver(() => {
+        if (containerEl.style.display === "none") return;
+        if (containerEl.clientWidth === 0 || containerEl.clientHeight === 0) return;
+        if (document.body.dataset.ideResizing === "1") return;
+        scheduleFit();
       });
       observer.observe(containerEl);
+
+      // Single catch-up fit once the divider drag ends. Stored on
+      // the session so dropLocalSession / finalizeDeferredClose can
+      // detach it when the terminal is disposed.
+      const onResizeEnd = () => scheduleFit();
+      window.addEventListener("ide:resize-end", onResizeEnd);
 
       const session: TermSession = {
         id,
@@ -273,6 +405,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
         connected: false,
         containerEl,
         observer,
+        onResizeEnd,
         reconnectTimer: null,
         shouldReconnect: true,
         closedLocally: false,
@@ -325,6 +458,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       }
       session.ws?.close();
       session.observer.disconnect();
+      if (session.onResizeEnd) {
+        window.removeEventListener("ide:resize-end", session.onResizeEnd);
+      }
       session.term.dispose();
       session.containerEl.remove();
       sessionsRef.current.splice(idx, 1);
@@ -397,6 +533,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     if (!session.deferredTeardown) return;
     session.deferredTeardown = false;
     try { session.observer.disconnect(); } catch {}
+    if (session.onResizeEnd) {
+      try { window.removeEventListener("ide:resize-end", session.onResizeEnd); } catch {}
+    }
     try { session.term.dispose(); } catch {}
     try { session.containerEl.remove(); } catch {}
     const idx = sessionsRef.current.findIndex((s) => s.id === session.id);
@@ -457,6 +596,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       }
       session.ws?.close();
       session.observer.disconnect();
+      if (session.onResizeEnd) {
+        window.removeEventListener("ide:resize-end", session.onResizeEnd);
+      }
       session.term.dispose();
       session.containerEl.remove();
 
@@ -596,6 +738,16 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
   }, [activeId, renameValue, updateSessionState]);
 
   useEffect(() => {
+    // Recompute scrolledUp for the newly-active session — otherwise
+    // the jump-to-bottom button's visibility reflects the *previous*
+    // tab's scroll position.
+    const active = sessionsRef.current.find((s) => s.id === activeId);
+    if (active) {
+      const buf = active.term.buffer.active;
+      setScrolledUp(buf.viewportY < buf.baseY - 1);
+    } else {
+      setScrolledUp(false);
+    }
     for (const session of sessionsRef.current) {
       if (session.id === activeId) {
         session.containerEl.style.display = "block";
@@ -671,6 +823,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
         }
         session.ws?.close();
         session.observer.disconnect();
+        if (session.onResizeEnd) {
+          window.removeEventListener("ide:resize-end", session.onResizeEnd);
+        }
         session.term.dispose();
         session.containerEl.remove();
       }
@@ -726,20 +881,24 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
         {sessions.map((s) => (
           <div
             key={s.id}
-            className={`flex items-center gap-1 px-2 py-1 text-xs rounded cursor-pointer transition-colors shrink-0 ${
+            className={`flex items-center gap-1.5 rounded cursor-pointer transition-colors shrink-0 ${
+              isMobile ? "px-3 py-2 text-sm min-h-[40px]" : "px-2 py-1 text-xs"
+            } ${
               s.id === activeId ? "bg-blue-800 text-white" : "text-blue-300 hover:bg-blue-800/50 hover:text-white"
             }`}
             onClick={() => setActiveId(s.id)}
           >
             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${s.connected ? "bg-green-400" : "bg-red-400"}`} />
-            <span className="truncate max-w-[100px]">{s.name}</span>
+            <span className={`truncate ${isMobile ? "max-w-[140px]" : "max-w-[100px]"}`}>{s.name}</span>
             {sessions.length > 1 && (
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   closeSession(s.id);
                 }}
-                className="ml-0.5 w-4 h-4 flex items-center justify-center rounded hover:bg-blue-700 text-blue-400 hover:text-white transition-colors text-[10px]"
+                className={`ml-0.5 flex items-center justify-center rounded hover:bg-blue-700 text-blue-400 hover:text-white transition-colors ${
+                  isMobile ? "w-7 h-7 text-sm" : "w-4 h-4 text-[10px]"
+                }`}
                 title="Cerrar terminal"
               >
                 x
@@ -828,7 +987,84 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
         </button>
       </div>
 
-      <div ref={wrapperRef} className="flex-1 min-h-0 relative">
+      <div
+        ref={wrapperRef}
+        className="flex-1 min-h-0 relative"
+        // Reserve space for the mobile special-keys bar at the bottom
+        // so the last lines of terminal output aren't hidden behind
+        // it. Add the safe-area inset so the bar clears the iPhone
+        // home indicator on notched devices.
+        style={
+          isMobile
+            ? { paddingBottom: "calc(48px + env(safe-area-inset-bottom, 0px))" }
+            : undefined
+        }
+      >
+        {isMobile && (
+          // Special-keys bar: the native virtual keyboard on iOS/Android
+          // doesn't expose Tab, Esc, arrow keys, or Ctrl modifiers, so
+          // working in any shell/REPL/editor is painful without these.
+          // The bar sits at the bottom of the terminal pane and sends
+          // the corresponding bytes straight into the active pty.
+          <div
+            className="absolute left-0 right-0 z-30 flex items-center gap-1 px-1.5 py-1 bg-blue-900/80 backdrop-blur border-t border-blue-800 overflow-x-auto"
+            // Push up above the safe-area inset so buttons aren't
+            // covered by the iPhone home indicator.
+            style={{ bottom: "env(safe-area-inset-bottom, 0px)" }}
+          >
+            {[
+              { label: "Esc", data: "\x1b" },
+              { label: "Tab", data: "\t" },
+              { label: "Ctrl+C", data: "\x03" },
+              { label: "Ctrl+D", data: "\x04" },
+              { label: "Ctrl+L", data: "\x0c" },
+              { label: "Ctrl+Z", data: "\x1a" },
+              { label: "↑", data: "\x1b[A" },
+              { label: "↓", data: "\x1b[B" },
+              { label: "←", data: "\x1b[D" },
+              { label: "→", data: "\x1b[C" },
+              { label: "Home", data: "\x1b[H" },
+              { label: "End", data: "\x1b[F" },
+              { label: "|", data: "|" },
+              { label: "/", data: "/" },
+              { label: "~", data: "~" },
+            ].map((k) => (
+              <button
+                key={k.label}
+                type="button"
+                // tabIndex=-1 keeps the button out of the focus order,
+                // which is what actually prevents iOS from blurring the
+                // terminal (and dismissing the virtual keyboard) when
+                // tapped. preventDefault on mouse/touch events is
+                // unreliable: React's touchstart is passive, and iOS
+                // focuses on touchstart before mousedown fires.
+                tabIndex={-1}
+                onClick={() => sendToActive(k.data)}
+                className="shrink-0 min-w-[40px] h-9 px-2 rounded bg-blue-800/60 active:bg-blue-700 text-blue-100 text-xs font-medium transition-colors select-none"
+              >
+                {k.label}
+              </button>
+            ))}
+          </div>
+        )}
+        {isMobile && scrolledUp && (
+          <button
+            onClick={() => {
+              const active = sessionsRef.current.find((s) => s.id === activeId);
+              if (!active) return;
+              active.term.scrollToBottom();
+              setScrolledUp(false);
+            }}
+            className="absolute right-3 bottom-14 z-40 w-11 h-11 rounded-full bg-blue-600/90 text-white shadow-lg backdrop-blur flex items-center justify-center active:scale-95 transition-transform"
+            title="Ir al final"
+            aria-label="Ir al final de la terminal"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+            </svg>
+          </button>
+        )}
+
         {showInputOverlay && (
           <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-sm p-3 flex flex-col gap-2">
             <div className="flex items-center justify-between">

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TerminalHandle } from "./Terminal";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 interface PlayBarProps {
   token: string;
@@ -198,6 +199,7 @@ export function PlayBar({
 }: PlayBarProps) {
   const [config, setConfig] = useState<PlayConfig | null>(() => loadConfig());
   const [showModal, setShowModal] = useState(false);
+  useEscapeKey(showModal, () => setShowModal(false));
   const [draft, setDraft] = useState<PlayConfig>({
     command: "",
     port: 3000,

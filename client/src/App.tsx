@@ -15,7 +15,27 @@ type MobileTab = "files" | "terminal" | "theme" | "editor";
 
 export default function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem("auth_token") || "");
-  const [dividerX, setDividerX] = useState(50);
+  // Persisted divider position — only updated on drag END. During a
+  // drag we write the live value directly to a CSS variable on the
+  // root element via a ref, so mousemove doesn't cause a React render
+  // of the entire IDE tree (Terminal, CodeEditor, FileExplorer...).
+  // Without this, every mousemove triggered a full render + xterm
+  // fitAddon.fit() cascade and the panel felt sluggish.
+  const [dividerX, setDividerX] = useState<number>(() => {
+    const saved = parseFloat(localStorage.getItem("ide_divider_x") || "");
+    return Number.isFinite(saved) && saved >= 20 && saved <= 80 ? saved : 50;
+  });
+  const rootRef = useRef<HTMLDivElement>(null);
+  const dividerXRef = useRef<number>(dividerX);
+  // Keep the CSS variable in sync with state (applies on initial mount
+  // and whenever dividerX changes from outside the drag handler).
+  useEffect(() => {
+    dividerXRef.current = dividerX;
+    if (rootRef.current) {
+      rootRef.current.style.setProperty("--ide-divider-x", `${dividerX}%`);
+    }
+    localStorage.setItem("ide_divider_x", String(dividerX));
+  }, [dividerX]);
   const [filesCollapsed, setFilesCollapsed] = useState<boolean>(
     () => localStorage.getItem("ide_files_collapsed") === "1"
   );
@@ -118,14 +138,36 @@ export default function App() {
       e.preventDefault();
       setIsDragging(true);
 
+      // Broadcast "IDE is resizing" as a body data-attribute. Heavy
+      // child subtrees (xterm's ResizeObserver) watch this and pause
+      // their own layout work while it's set — xterm's fit() is
+      // expensive enough that running it every frame during a drag
+      // causes visible flicker as the WebGL canvas clears + repaints.
+      document.body.dataset.ideResizing = "1";
+
+      let latestPct = dividerXRef.current;
       const onMove = (ev: MouseEvent) => {
-        const pct = (ev.clientX / window.innerWidth) * 100;
-        setDividerX(Math.max(20, Math.min(80, pct)));
+        const pct = Math.max(20, Math.min(80, (ev.clientX / window.innerWidth) * 100));
+        latestPct = pct;
+        // Direct style write — browsers batch style invalidation on
+        // the next paint tick, which matches mousemove cadence
+        // perfectly. A manual rAF wrapper here adds a frame of lag
+        // between the cursor and the divider, which feels worse than
+        // the extra few writes it avoids.
+        rootRef.current?.style.setProperty("--ide-divider-x", `${latestPct}%`);
       };
       const onUp = () => {
         setIsDragging(false);
         document.removeEventListener("mousemove", onMove);
         document.removeEventListener("mouseup", onUp);
+        delete document.body.dataset.ideResizing;
+        // Commit the final value to state so it persists and the CSS
+        // var matches state on the next render.
+        setDividerX(latestPct);
+        // Tell listeners (Terminal, CodeEditor) the drag is over so
+        // they can run a single catch-up fit/refresh now that
+        // further layout thrash is done.
+        window.dispatchEvent(new Event("ide:resize-end"));
       };
       document.addEventListener("mousemove", onMove);
       document.addEventListener("mouseup", onUp);
@@ -138,7 +180,10 @@ export default function App() {
   }
 
   return (
-    <div className={`ide-root h-full flex flex-col md:flex-row ${isDragging ? "select-none cursor-col-resize" : ""}`}>
+    <div
+      ref={rootRef}
+      className={`ide-root h-full flex flex-col md:flex-row ${isDragging ? "select-none cursor-col-resize" : ""}`}
+    >
       <div className="md:hidden px-3 py-2 border-b ide-border ide-panel-soft flex items-center gap-1.5 shrink-0">
         <button
           onClick={() => setMobileTab("files")}
@@ -197,7 +242,15 @@ export default function App() {
         className={`${mobileTab === "files" ? "flex" : "hidden"} ${
           filesCollapsed ? "md:hidden" : "md:flex"
         } h-full overflow-hidden flex-col ide-panel`}
-        style={!isMobile && !filesCollapsed ? { width: `${dividerX}%` } : undefined}
+        // Width is driven by a CSS variable set on the root element;
+        // updating it during drag doesn't require a React render.
+        // `contain: layout style` isolates the file explorer's
+        // layout/paint from the rest of the IDE.
+        style={
+          !isMobile && !filesCollapsed
+            ? { width: "var(--ide-divider-x, 50%)", contain: "layout style" }
+            : { contain: "layout style" }
+        }
       >
         <FileExplorer
           token={token}
@@ -217,8 +270,13 @@ export default function App() {
         className={`${mobileTab === "files" ? "hidden" : "flex"} md:flex h-full overflow-hidden flex-col ide-panel`}
         style={
           !isMobile
-            ? { width: filesCollapsed ? "100%" : `${100 - dividerX}%` }
-            : undefined
+            ? {
+                width: filesCollapsed
+                  ? "100%"
+                  : "calc(100% - var(--ide-divider-x, 50%))",
+                contain: "layout style",
+              }
+            : { contain: "layout style" }
         }
       >
         <div className="hidden md:flex px-4 py-2 border-b ide-border ide-panel-soft items-center gap-2">
@@ -288,8 +346,27 @@ export default function App() {
           </button>
         </div>
 
-        <div className="flex-1 min-h-0">
-          <div className={rightTab === "editor" ? "h-full flex flex-col" : "hidden"}>
+        {/*
+          Right-pane tab switcher. Previously we toggled each child with
+          `hidden` (display:none), which forced a layout recalc on every
+          switch and triggered xterm's fit() dance. Now we keep all
+          three mounted and stacked absolutely, swapping visibility +
+          pointer-events. The inactive layers keep their geometry so
+          the terminal doesn't have to re-measure when it comes back.
+        */}
+        <div className="flex-1 min-h-0 relative">
+          <div
+            className="absolute inset-0 flex flex-col"
+            style={{
+              visibility: rightTab === "editor" ? "visible" : "hidden",
+              pointerEvents: rightTab === "editor" ? "auto" : "none",
+              // contain: layout/style tells the browser this subtree
+              // can't affect the siblings' layout — repaints stay
+              // scoped to the active pane.
+              contain: "layout style",
+            }}
+            aria-hidden={rightTab !== "editor"}
+          >
             <EditorTabs file={openFile} dirty={editorDirty} onClose={handleCloseEditor} />
             <div className="flex-1 min-h-0">
               <CodeEditor
@@ -301,14 +378,30 @@ export default function App() {
               />
             </div>
           </div>
-          <div className={rightTab === "terminal" ? "h-full" : "hidden"}>
+          <div
+            className="absolute inset-0"
+            style={{
+              visibility: rightTab === "terminal" ? "visible" : "hidden",
+              pointerEvents: rightTab === "terminal" ? "auto" : "none",
+              contain: "layout style",
+            }}
+            aria-hidden={rightTab !== "terminal"}
+          >
             <Terminal
               token={token}
               ref={terminalRef}
               onSessionsChange={setTerminalSessionNames}
             />
           </div>
-          <div className={rightTab === "theme" ? "h-full" : "hidden"}>
+          <div
+            className="absolute inset-0"
+            style={{
+              visibility: rightTab === "theme" ? "visible" : "hidden",
+              pointerEvents: rightTab === "theme" ? "auto" : "none",
+              contain: "layout style",
+            }}
+            aria-hidden={rightTab !== "theme"}
+          >
             <ThemeCustomizer
               theme={theme}
               onChange={setTheme}
