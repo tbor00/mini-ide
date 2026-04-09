@@ -337,15 +337,28 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
       }
 
       // Track whether the user scrolled up from the bottom so the
-      // mobile "jump to bottom" button can hide itself once they're
-      // already at the tail. Only the *active* terminal drives this
-      // state — we compare ids in the callback.
-      term.onScroll(() => {
-        const atBottom = term.buffer.active.viewportY >= term.buffer.active.baseY - 1;
-        if (activeIdRef.current === id) {
-          setScrolledUp(!atBottom);
-        }
-      });
+      // mobile "jump to bottom" button can show itself reliably.
+      //
+      // term.onScroll only fires when xterm's *internal* buffer
+      // viewport changes, which on touch devices doesn't always
+      // happen for every finger-pan — the user can drag the native
+      // .xterm-viewport scrollbar around without xterm's buffer
+      // notifying us. Listening directly to the DOM scroll event
+      // catches every scroll, including momentum/inertial ones.
+      //
+      // Threshold is in CSS pixels below the bottom: anything more
+      // than ~80px (~5 lines) counts as "scrolled up" so the button
+      // appears immediately when the user pulls away from the tail.
+      const SCROLL_UP_THRESHOLD_PX = 80;
+      if (viewport) {
+        const onViewportScroll = () => {
+          if (activeIdRef.current !== id) return;
+          const distanceFromBottom =
+            viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+          setScrolledUp(distanceFromBottom > SCROLL_UP_THRESHOLD_PX);
+        };
+        viewport.addEventListener("scroll", onViewportScroll, { passive: true });
+      }
 
       // fitAddon.fit() is expensive (layout math + resize message to
       // the pty + canvas re-create for WebGL). Two guards here:
@@ -751,11 +764,19 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
   useEffect(() => {
     // Recompute scrolledUp for the newly-active session — otherwise
     // the jump-to-bottom button's visibility reflects the *previous*
-    // tab's scroll position.
+    // tab's scroll position. Match the DOM-based threshold used by
+    // the per-session scroll listener so the button appears
+    // consistently regardless of which path triggered the update.
     const active = sessionsRef.current.find((s) => s.id === activeId);
     if (active) {
-      const buf = active.term.buffer.active;
-      setScrolledUp(buf.viewportY < buf.baseY - 1);
+      const viewport = active.containerEl.querySelector<HTMLElement>(".xterm-viewport");
+      if (viewport) {
+        const distanceFromBottom =
+          viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+        setScrolledUp(distanceFromBottom > 80);
+      } else {
+        setScrolledUp(false);
+      }
     } else {
       setScrolledUp(false);
     }
