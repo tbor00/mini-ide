@@ -24,6 +24,20 @@ RUN set -eux; \
     /tmp/aws/install; \
     rm -rf /tmp/aws /tmp/awscliv2.zip
 
+# Install cloudflared (Cloudflare Tunnel client, arch-aware). Used by
+# the Play button feature to expose a local dev server via a quick
+# trycloudflare.com URL with no account.
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) cfurl="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64" ;; \
+      arm64) cfurl="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64" ;; \
+      *) echo "unsupported arch $arch" && exit 1 ;; \
+    esac; \
+    curl -fsSL "$cfurl" -o /usr/local/bin/cloudflared; \
+    chmod +x /usr/local/bin/cloudflared; \
+    /usr/local/bin/cloudflared --version
+
 # Install GitHub CLI
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
